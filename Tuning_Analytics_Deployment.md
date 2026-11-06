@@ -1,4 +1,4 @@
-# Client B – Tuning Analytics Rules Deployment
+# Tuning Analytics Rules Deployment
 
 ## Change summary
 
@@ -12,8 +12,8 @@ No data connectors, data collection or other workspace settings change.
 
 | File | Purpose | Deployment |
 | --- | --- | --- |
-| `CB_Tuning_Analytics_Rules.json` | 27 analytics rules (ARM template) | Sentinel → Analytics → Import |
-| `CB_Tuning_AutoClose_AutomationRule.json` | Auto-close automation rule (ARM template) | Azure portal → Deploy a custom template (after the rules) |
+| `Tuning_Analytics_Rules.json` | 27 analytics rules (ARM template) | Sentinel → Analytics → Import |
+| `Tuning_AutoClose_AutomationRule.json` | Auto-close automation rule (ARM template) | Azure portal → Deploy a custom template (after the rules) |
 
 ## Rules
 
@@ -49,7 +49,7 @@ No data connectors, data collection or other workspace settings change.
 
 ## Automation rule
 
-**CB - Auto-close [Tuning] analytics**: when an incident is created by any of the 27 rules above, it:
+**Auto-close [Tuning] analytics**: when an incident is created by any of the 27 rules above, it:
 
 1. Adds the tag `Tuning`.
 2. Closes the incident as **Benign Positive – suspicious but expected**, with the comment "Tuning rule - auto-closed while under review".
