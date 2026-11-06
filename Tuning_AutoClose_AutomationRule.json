@@ -12,7 +12,7 @@
       "apiVersion": "2023-12-01-preview",
       "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/713ce39b-22c7-5ed7-9fa4-578c9986ffbe')]",
       "properties": {
-        "displayName": "CB - Auto-close [Tuning] analytics",
+        "displayName": "Auto-close [Tuning] analytics",
         "order": 1,
         "triggeringLogic": {
           "isEnabled": true,
