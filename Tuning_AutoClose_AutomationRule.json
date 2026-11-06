@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/automationRules",
+      "apiVersion": "2023-12-01-preview",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/713ce39b-22c7-5ed7-9fa4-578c9986ffbe')]",
+      "properties": {
+        "displayName": "CB - Auto-close [Tuning] analytics",
+        "order": 1,
+        "triggeringLogic": {
+          "isEnabled": true,
+          "triggersOn": "Incidents",
+          "triggersWhen": "Created",
+          "conditions": [
+            {
+              "conditionType": "Property",
+              "conditionProperties": {
+                "propertyName": "IncidentRelatedAnalyticRuleIds",
+                "operator": "Contains",
+                "propertyValues": [
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'c567b96f-5058-524c-8fa8-01a389f522e7')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '675b9f81-775b-5aca-95c7-44cd8b636c02')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '4b3c357e-4ebd-5f12-a833-fcff198063b0')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '39ad8c6c-1099-526a-9ba8-7898409a66db')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '7b8abdce-b24d-57b4-ad78-7fd9dad38283')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'd0d37c60-5951-5b47-98a3-106f05f934ec')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '69e8133f-97c0-52c8-b2ad-03753645b2fe')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'f85731db-7552-55fa-a580-a121b7fa41e7')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '2b995445-af2f-5487-b8fd-06b0f2173ccb')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'e027d3a0-aa5e-5426-b3a5-52f7de8da0bc')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '12918551-254a-5a7d-93be-c0016e412e32')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'd04e7d8b-63d6-572c-837f-6abd22595460')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'fd4661f3-a7c5-558f-bd07-8692dbaa2ceb')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '888f796b-a4e3-5ae3-8d48-6791e09c92da')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '927bdaa2-4ef8-5201-be58-e2d83839f7cf')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '0144fef3-9667-5bb4-90a1-06ce24222963')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '52cacdba-6998-5c2e-8351-9513645376f2')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '3aa1fbeb-3c08-5ef5-af8f-9200373ca005')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '31bd09c5-4495-5918-be55-e689dcc9897f')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '62dcaa7e-767a-5d0a-8824-6aee97128863')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '4814e6b9-37ee-5123-ba3d-a062b7e28ca4')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '478f68ae-2936-5f54-9a0b-98b4a5a4a36e')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '011180f9-2010-5ae8-a9b4-2c9496e46126')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'bacbb8fb-3b3e-5693-aaa2-23fa1ecac16a')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '6ab28a7e-ef23-5e12-aeb3-2b038696c692')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', '0b200f33-a54e-5c8c-ae8c-5152e805b6e8')]",
+                  "[resourceId('Microsoft.OperationalInsights/workspaces/providers/alertRules', parameters('workspace'), 'Microsoft.SecurityInsights', 'c85332cf-8e2a-53f9-92f3-39a7082a6558')]"
+                ]
+              }
+            }
+          ]
+        },
+        "actions": [
+          {
+            "order": 1,
+            "actionType": "ModifyProperties",
+            "actionConfiguration": {
+              "labels": [
+                {
+                  "labelName": "Tuning"
+                }
+              ]
+            }
+          },
+          {
+            "order": 2,
+            "actionType": "ModifyProperties",
+            "actionConfiguration": {
+              "status": "Closed",
+              "classification": "BenignPositive",
+              "classificationReason": "SuspiciousButExpected",
+              "classificationComment": "Tuning rule - auto-closed while under review"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

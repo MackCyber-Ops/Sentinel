@@ -1,0 +1,2285 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/c567b96f-5058-524c-8fa8-01a389f522e7')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/c567b96f-5058-524c-8fa8-01a389f522e7')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Excessive Windows Logon Failures",
+        "description": "This query identifies user accounts which has over 50 Windows logon failures today and at least 33% of the count of logon failures over the previous 7 days.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let starttime = 8d;\nlet endtime = 1d;\nlet threshold = 0.333;\nlet countlimit = 50;\nSecurityEvent\n| where TimeGenerated >= ago(endtime)\n| where EventID == 4625 and AccountType =~ \"User\"\n| where IpAddress !in (\"127.0.0.1\", \"::1\")\n| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), CountToday = count() by EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress, Process\n| join kind=leftouter (\n    SecurityEvent\n    | where TimeGenerated between (ago(starttime) .. ago(endtime))\n    | where EventID == 4625 and AccountType =~ \"User\"\n    | where IpAddress !in (\"127.0.0.1\", \"::1\")\n    | summarize CountPrev7day = count() by EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress\n) on EventID, Account, LogonTypeName, SubStatus, AccountType, Computer, WorkstationName, IpAddress\n| where CountToday >= coalesce(CountPrev7day,0)*threshold and CountToday >= countlimit\n//SubStatus Codes are detailed here - https://docs.microsoft.com/windows/security/threat-protection/auditing/event-4625\n| extend Reason = case(\nSubStatus =~ '0xC000005E', 'There are currently no logon servers available to service the logon request.',\nSubStatus =~ '0xC0000064', 'User logon with misspelled or bad user account',\nSubStatus =~ '0xC000006A', 'User logon with misspelled or bad password',\nSubStatus =~ '0xC000006D', 'Bad user name or password',\nSubStatus =~ '0xC000006E', 'Unknown user name or bad password',\nSubStatus =~ '0xC000006F', 'User logon outside authorized hours',\nSubStatus =~ '0xC0000070', 'User logon from unauthorized workstation',\nSubStatus =~ '0xC0000071', 'User logon with expired password',\nSubStatus =~ '0xC0000072', 'User logon to account disabled by administrator',\nSubStatus =~ '0xC00000DC', 'Indicates the Sam Server was in the wrong state to perform the desired operation',\nSubStatus =~ '0xC0000133', 'Clocks between DC and other computer too far out of sync',\nSubStatus =~ '0xC000015B', 'The user has not been granted the requested logon type (aka logon right) at this machine',\nSubStatus =~ '0xC000018C', 'The logon request failed because the trust relationship between the primary domain and the trusted domain failed',\nSubStatus =~ '0xC0000192', 'An attempt was made to logon, but the Netlogon service was not started',\nSubStatus =~ '0xC0000193', 'User logon with expired account',\nSubStatus =~ '0xC0000224', 'User is required to change password at next logon',\nSubStatus =~ '0xC0000225', 'Evidently a bug in Windows and not a risk',\nSubStatus =~ '0xC0000234', 'User logon with account locked',\nSubStatus =~ '0xC00002EE', 'Failure Reason: An Error occurred during Logon',\nSubStatus =~ '0xC0000413', 'Logon Failure: The machine you are logging onto is protected by an authentication firewall. The specified account is not allowed to authenticate to the machine',\nstrcat('Unknown reason substatus: ', SubStatus))\n| extend WorkstationName = iff(WorkstationName == \"-\" or isempty(WorkstationName), Computer , WorkstationName)\n| project StartTime, EndTime, EventID, Account, LogonTypeName, SubStatus, Reason, AccountType, Computer, WorkstationName, IpAddress, CountToday, CountPrev7day, Avg7Day = round(CountPrev7day*1.00/7,2), Process\n| summarize StartTime = min(StartTime), EndTime = max(EndTime), Computer = make_set(Computer,128), IpAddressList = make_set(IpAddress,128), sum(CountToday), sum(CountPrev7day), avg(Avg7Day)\nby EventID, Account, LogonTypeName, SubStatus, Reason, AccountType, WorkstationName, Process\n| order by sum_CountToday desc nulls last\n| extend timestamp = StartTime, NTDomain = tostring(split(Account, '\\\\', 0)[0]), Name = tostring(split(Account, '\\\\', 1)[0]), HostName = tostring(split(WorkstationName, '.', 0)[0]), DnsDomain = tostring(strcat_array(array_slice(split(WorkstationName, '.'), 1, -1), '.'))\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "2391ce61-8c8d-41ac-9723-d945b2e90720",
+        "templateVersion": "2.0.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P8D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "NTDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "WorkstationName"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "Process"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/675b9f81-775b-5aca-95c7-44cd8b636c02')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/675b9f81-775b-5aca-95c7-44cd8b636c02')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Lateral Movement via DCOM",
+        "description": "This query detects a fairly uncommon attack technique using the Windows Distributed Component Object Model (DCOM) to make a remote execution call to another computer system and gain lateral movement throughout the network.\nRef: http://thenegative.zone/incident%20response/2017/02/04/MMC20.Application-Lateral-Movement-Analysis.html",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "Event\n| where EventLog =~ \"Microsoft-Windows-Sysmon/Operational\" and EventID==1\n| parse EventData with * 'CommandLine\">' CommandLine \"<\" * 'ParentCommandLine\">' ParentCommandLine \"<\" *\n| where ParentCommandLine =~ \"C:\\\\Windows\\\\System32\\\\svchost.exe -k DcomLaunch\" and CommandLine =~ \"C:\\\\Windows\\\\System32\\\\mmc.exe -Embedding\"\n| parse EventData with * 'ProcessGuid\">' ProcessGuid \"<\" * 'Image\">' Image \"<\" * 'Description\">' Description \"<\" * 'CurrentDirectory\">' CurrentDirectory \"<\" * 'User\">' User \"<\" * 'LogonGuid\">' LogonGuid \"<\" * 'ParentProcessGuid\">' ParentProcessGuid \"<\" * 'ParentImage\">' ParentImage \"<\" * 'ParentCommandLine\">' ParentCommandLine \"<\" * 'ParentUser\">' ParentUser \"<\" *\n| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated) by EventID, Computer, User, ParentImage, ParentProcessGuid, ParentCommandLine, ParentUser, Image, ProcessGuid, CommandLine, Description\n| extend HostName = iif(Computer has '.',substring(Computer,0,indexof(Computer,'.')),Computer) , DnsDomain = iif(Computer has '.',substring(Computer,indexof(Computer,'.')+1),'')\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "LateralMovement"
+        ],
+        "techniques": [
+          "T1021"
+        ],
+        "subTechniques": [
+          "T1021.003"
+        ],
+        "alertRuleTemplateName": "50cbf34a-4cdd-45d7-b3f5-8b53a1d0d14f",
+        "templateVersion": "1.0.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "CommandLine"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "User"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/4b3c357e-4ebd-5f12-a833-fcff198063b0')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/4b3c357e-4ebd-5f12-a833-fcff198063b0')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Security Event log cleared",
+        "description": "Checks for event id 1102 which indicates the security event log was cleared.\nIt uses Event Source Name \"Microsoft-Windows-Eventlog\" to avoid generating false positives from other sources, like AD FS servers for instance.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "(union isfuzzy=true\n(\nSecurityEvent\n| where EventID == 1102 and EventSourceName =~ \"Microsoft-Windows-Eventlog\"\n| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), EventCount = count() by Computer, Account, EventID, Activity\n),\n(\nWindowsEvent\n| where EventID == 1102 and Provider =~ \"Microsoft-Windows-Eventlog\"\n| extend Account =  strcat(tostring(EventData.SubjectDomainName),\"\\\\\", tostring(EventData.SubjectUserName))\n| extend Activity= \"1102 - The audit log was cleared.\"\n| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), EventCount = count() by Computer, Account, EventID, Activity\n)\n)\n| extend Name=tostring(split(Account, \"@\")[0]), UPNSuffix=tostring(split(Account, \"@\")[1])\n| extend HostName = iif(Computer has '.',substring(Computer,0,indexof(Computer,'.')),Computer) , DnsDomain = iif(Computer has '.',substring(Computer,indexof(Computer,'.')+1),'')\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1070"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "80da0a8f-cfe1-4cd0-a895-8bc1771a720e",
+        "templateVersion": "1.1.5",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/39ad8c6c-1099-526a-9ba8-7898409a66db')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/39ad8c6c-1099-526a-9ba8-7898409a66db')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Brute force attack against an Entra-authenticated Windows device",
+        "description": "Identifies evidence of brute force activity against Windows devices authenticated via Entra ID (including Entra-joined, hybrid-joined, and Windows 365 Cloud PCs) by detecting multiple authentication failures followed by a successful authentication within a defined time window.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let authenticationWindow = 20m;\nlet sensitivity = 2.5;\nSigninLogs\n| where AppDisplayName =~ \"Windows Sign In\"\n| extend FailureOrSuccess = iff(ResultType in (\"0\", \"50125\", \"50140\", \"70043\", \"70044\"), \"Success\", \"Failure\")\n| summarize FailureCount = countif(FailureOrSuccess==\"Failure\"), SuccessCount = countif(FailureOrSuccess==\"Success\"), IPAddresses = make_set(IPAddress,1000)\n                          by bin(TimeGenerated, authenticationWindow), UserDisplayName, UserPrincipalName\n| extend FailureSuccessDiff = FailureCount - SuccessCount\n| where FailureSuccessDiff > 0\n| sort by UserPrincipalName asc, TimeGenerated asc\n| serialize\n| summarize Diff = make_list(FailureSuccessDiff, 10000), TimeStamp = make_list(TimeGenerated, 10000) by UserDisplayName, UserPrincipalName//, tostring(IPAddresses)\n| extend (Anomalies, Score, Baseline) = series_decompose_anomalies(Diff, sensitivity, -1, 'linefit')  \n| mv-expand Diff to typeof(double), TimeStamp to typeof(datetime), Anomalies to typeof(double), Score to typeof(double), Baseline to typeof(long)\n| where Anomalies > 0\n| summarize by UserDisplayName, UserPrincipalName, Anomalies, Score, Baseline, FailureToSuccessDiff = Diff\n| join kind=leftouter (\n      SigninLogs\n      | where AppDisplayName =~ \"Windows Sign In\"\n      | extend OS = DeviceDetail.operatingSystem, Browser = DeviceDetail.browser\n      | extend StatusCode = tostring(Status.errorCode), StatusDetails = tostring(Status.additionalDetails)\n      | extend State = tostring(LocationDetails.state), City = tostring(LocationDetails.city)\n      | summarize StartTime = min(TimeGenerated), \n                  EndTime = max(TimeGenerated), \n                  IPAddresses = make_set(IPAddress,100), \n                  OS = make_set(OS,20), \n                  Browser = make_set(Browser,20), \n                  City = make_set(City,100), \n                  ResultType = make_set(ResultType,100)\n              by UserDisplayName, UserPrincipalName, UserId, AppDisplayName\n  ) on UserDisplayName, UserPrincipalName\n| project-away UserDisplayName1, UserPrincipalName1\n| extend IPAddressFirst = tostring(IPAddresses[0])\n| extend Name = tostring(split(UserPrincipalName,'@',0)[0]), UPNSuffix = tostring(split(UserPrincipalName,'@',1)[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "3fbc20a4-04c4-464e-8fcb-6667f53e4987",
+        "templateVersion": "2.0.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "UserId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IPAddressFirst"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/7b8abdce-b24d-57b4-ad78-7fd9dad38283')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/7b8abdce-b24d-57b4-ad78-7fd9dad38283')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Suspicious Powershell Commandlet Executed",
+        "description": "This analytic rule detects when a suspicious PowerShell commandlet is executed on a host. Threat actors often use PowerShell to execute commands and scripts to move laterally, escalate privileges, and exfiltrate data.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// Adjust the list of suspicious commandlets as needed\nlet SuspiciousPowerShellCommandList = dynamic([\"Get-ADUserResultantPasswordPolicy\",\n  \"Get-DomainPolicy\",\n  \"Get-DomainUser\",\n  \"Get-DomainComputer\",\n  \"Get-DomainController\",\n  \"Get-DomainGroup\",\n  \"Get-DomainTrust\",\n  \"Get-ADTrust\",\n  \"Get-ForestTrust\"\n  ]);\nDeviceEvents\n| where ActionType == \"PowerShellCommand\"\n| extend Commandlet = tostring(parse_json(AdditionalFields).Command)\n| where Commandlet has_any (SuspiciousPowerShellCommandList)\n| project TimeGenerated, DeviceName, LocalIP, InitiatingProcessAccountUpn, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine\n| extend Username = tostring(split(InitiatingProcessAccountUpn, '@')[0]), UPNSuffix = tostring(split(InitiatingProcessAccountUpn, '@')[1])\n| extend DvcHostname = tostring(split(DeviceName, '.')[0]), DvcDomain = tostring(strcat_array(array_slice(split(DeviceName, '.'), 1, -1), '.'))\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Execution"
+        ],
+        "techniques": [
+          "T1059"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "b5153fb3-ada9-4ce4-9131-79c771efb50d",
+        "templateVersion": "1.0.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "DvcHostname"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DvcDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "LocalIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Username"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "ProcessId",
+                "columnName": "InitiatingProcessId"
+              },
+              {
+                "identifier": "CommandLine",
+                "columnName": "InitiatingProcessCommandLine"
+              }
+            ]
+          }
+        ],
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "[Tuning] Suspicious PowerShell Commandlet Executed on {{DvcHostname}} ({{LocalIP}}) by ({{InitiatingProcessAccountUpn}})",
+          "alertDescriptionFormat": "Suspicious PowerShell Commandlet by Process '{{InitiatingProcessFileName}}' ProcessId: '{{InitiatingProcessId}}' with commandline {{InitiatingProcessCommandLine}} was executed."
+        }
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/d0d37c60-5951-5b47-98a3-106f05f934ec')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/d0d37c60-5951-5b47-98a3-106f05f934ec')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Office365 Sharepoint File transfer above threshold",
+        "description": "Identifies Office365 Sharepoint File Transfers above certain threshold in a 15min time period.\n Please note that entity mapping for arrays is not supported, so when there is a single value in an array, we will pull that value from the array as a single string to populate the entity to support entity mapping features within Sentinel. Additionally, if the array is multivalued, we will input a string to indicate this with a unique hash so that matching will not occur.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let threshold = 5000;\nOfficeActivity\n| where EventSource == \"SharePoint\" and OfficeWorkload has_any(\"SharePoint\", \"OneDrive\") and Operation has_any (\"FileDownloaded\", \"FileSyncDownloadedFull\", \"FileSyncUploadedFull\", \"FileUploaded\")\n| summarize count_distinct_OfficeObjectId=dcount(OfficeObjectId), fileslist=make_set(OfficeObjectId, 10000) by UserId,ClientIP,bin(TimeGenerated, 15m)\n| where count_distinct_OfficeObjectId >= threshold\n| extend FileSample = iff(array_length(fileslist) == 1, tostring(fileslist[0]), strcat(\"SeeFilesListField\",\"_\", tostring(hash(tostring(fileslist)))))\n| extend AccountName = tostring(split(UserId, \"@\")[0]), AccountUPNSuffix = tostring(split(UserId, \"@\")[1])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1020"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "8b4f03e7-3460-4401-824d-e65a8dd464f0",
+        "templateVersion": "1.0.6",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [
+              "Account"
+            ],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserId"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "AccountUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "ClientIP"
+              }
+            ]
+          },
+          {
+            "entityType": "File",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "FileSample"
+              }
+            ]
+          }
+        ],
+        "customDetails": {
+          "TransferCount": "count_distinct_OfficeObjectId",
+          "FilesList": "fileslist"
+        }
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/69e8133f-97c0-52c8-b2ad-03753645b2fe')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/69e8133f-97c0-52c8-b2ad-03753645b2fe')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Audit policy manipulation using auditpol utility",
+        "description": "This detects attempts to manipulate audit policies using auditpol command.\nThis technique was seen in relation to Solorigate attack but the results can indicate potential malicious activity used in different attacks.\nThe process name in each data source is commented out as an adversary could rename it. It is advisable to keep process name commented but if the results show unrelated false positives, users may want to uncomment it.\nRefer to auditpol syntax: https://docs.microsoft.com/windows-server/administration/windows-commands/auditpol  \nRefer to our M365 blog for details on use during the Solorigate attack:\nhttps://www.microsoft.com/security/blog/2021/01/20/deep-dive-into-the-solorigate-second-stage-activation-from-sunburst-to-teardrop-and-raindrop/",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let timeframe = 1d;\nlet AccountAllowList = dynamic(['SYSTEM']);\nlet SubCategoryList = dynamic([\"Logoff\", \"Account Lockout\", \"User Account Management\", \"Authorization Policy Change\"]); // Add any Category in the list to be allowed or disallowed\nlet tokens = dynamic([\"clear\", \"remove\", \"success:disable\",\"failure:disable\"]); \n(union isfuzzy=true\n(\nSecurityEvent\n| where TimeGenerated >= ago(timeframe)\n//| where Process =~ \"auditpol.exe\" \n| where CommandLine has_any (tokens)\n| where AccountType !~ \"Machine\" and Account !in~ (AccountAllowList)\n| parse CommandLine with * \"/subcategory:\" subcategorytoken\n| extend SubCategory = tostring(split(subcategorytoken, \"\\\"\")[1]) , Toggle =  tostring(split(subcategorytoken, \"\\\"\")[2])\n| where SubCategory in~ (SubCategoryList) //use in~ for inclusion or !in~ for exclusion\n| where Toggle !in~ (\"/failure:disable\", \" /success:enable /failure:disable\") // use this filter if required to exclude certain toggles\n| project TimeGenerated, Computer, Account, SubjectDomainName, SubjectUserName, Process, ParentProcessName, CommandLine, SubCategory, Toggle\n| extend timestamp = TimeGenerated, AccountName = SubjectUserName, AccountDomain = SubjectDomainName, DeviceName = Computer\n),\n(\nDeviceProcessEvents\n| where TimeGenerated >= ago(timeframe)\n// | where InitiatingProcessFileName =~ \"auditpol.exe\" \n| where InitiatingProcessCommandLine has_any (tokens)\n| where AccountName !in~ (AccountAllowList)\n| parse InitiatingProcessCommandLine with * \"/subcategory:\" subcategorytoken\n| extend SubCategory = tostring(split(subcategorytoken, \"\\\"\")[1]) , Toggle =  tostring(split(subcategorytoken, \"\\\"\")[2])\n| where SubCategory in~ (SubCategoryList) //use in~ for inclusion or !in~ for exclusion\n| where Toggle !in~ (\"/failure:disable\", \" /success:enable /failure:disable\") // use this filter if required to exclude certain toggles\n| project TimeGenerated, DeviceName, AccountName, InitiatingProcessAccountDomain, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessParentFileName,  InitiatingProcessCommandLine, SubCategory, Toggle\n| extend timestamp = TimeGenerated, AccountName = InitiatingProcessAccountName, AccountDomain = InitiatingProcessAccountDomain\n),\n(\nEvent\n| where TimeGenerated > ago(timeframe)\n| where Source == \"Microsoft-Windows-Sysmon\"\n| where EventID == 1\n| extend EventData = parse_xml(EventData).DataItem.EventData.Data\n| mv-expand bagexpansion=array EventData\n| evaluate bag_unpack(EventData)\n| extend Key=tostring(['@Name']), Value=['#text']\n| evaluate pivot(Key, any(Value), TimeGenerated, Source, EventLog, Computer, EventLevel, EventLevelName, EventID, UserName, RenderedDescription, MG, ManagementGroupName, Type, _ResourceId)\n// | where OriginalFileName =~ \"auditpol.exe\"\n| where CommandLine has_any (tokens)\n| where User !in~ (AccountAllowList)\n| parse CommandLine with * \"/subcategory:\" subcategorytoken\n| extend SubCategory = tostring(split(subcategorytoken, \"\\\"\")[1]) , Toggle =  tostring(split(subcategorytoken, \"\\\"\")[2])\n| where SubCategory in~ (SubCategoryList) //use in~ for inclusion or !in~ for exclusion\n| where Toggle !in~ (\"/failure:disable\", \" /success:enable /failure:disable\") // use this filter if required to exclude certain toggles\n| project TimeGenerated, Computer, User, Process, ParentImage, CommandLine, SubCategory, Toggle\n| extend timestamp = TimeGenerated, AccountName = tostring(split(User, @'\\')[1]), AccountUPNSuffix = tostring(split(User, @'\\')[0]), DeviceName = Computer\n)\n)\n| extend Account = strcat(AccountDomain, \"\\\\\", AccountName)\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Execution"
+        ],
+        "techniques": [
+          "T1204"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "66276b14-32c5-4226-88e3-080dacc31ce1",
+        "templateVersion": "1.2.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "DeviceName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/f85731db-7552-55fa-a580-a121b7fa41e7')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/f85731db-7552-55fa-a580-a121b7fa41e7')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Windows Binaries Executed from Non-Default Directory",
+        "description": "The query detects Windows binaries, that can be executed from a non-default directory (e.g. C:\\Windows\\, C:\\Windows\\System32 etc.). \nRef: https://lolbas-project.github.io/",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let procList = externaldata(Process:string) [@\"https://raw.githubusercontent.com/Azure/Azure-Sentinel/master/Sample%20Data/Microsoft_Lolbas_Execution_Binaries.csv\"] with (format=\"csv\", ignoreFirstRecord=True);\nSecurityEvent\n| where EventID == 4688 and Process has_any (procList) and not (NewProcessName has (\"C:\\\\Windows\\\\\"))\n| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated) by EventID, Computer, SubjectUserName, NewProcessName, Process, CommandLine\n| extend Name=tostring(split(SubjectUserName, \"@\")[0]), UPNSuffix=tostring(split(SubjectUserName, \"@\")[1])\n| extend HostName = iif(Computer has '.',substring(Computer,0,indexof(Computer,'.')),Computer) , DnsDomain = iif(Computer has '.',substring(Computer,indexof(Computer,'.')+1),'')\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Execution"
+        ],
+        "techniques": [
+          "T1059"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "15049017-527f-4d3b-b011-b0e99e68ef45",
+        "templateVersion": "1.0.4",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "CommandLine"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/2b995445-af2f-5487-b8fd-06b0f2173ccb')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/2b995445-af2f-5487-b8fd-06b0f2173ccb')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] SharePointFileOperation via previously unseen IPs",
+        "description": "Identifies anomalies using user behavior by setting a threshold for significant changes in file upload/download activities from new IP addresses. It establishes a baseline of typical behavior, compares it to recent activity, and flags deviations exceeding a default threshold of 25.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// Define a threshold for significant deviations\nlet threshold = 25;\n// Define the name for the SharePoint File Operation record type\nlet szSharePointFileOperation = \"SharePointFileOperation\";\n// Define an array of SharePoint operations of interest\nlet szOperations = dynamic([\"FileDownloaded\", \"FileUploaded\"]);\n// Define the start and end time for the analysis period\nlet starttime = 14d;\nlet endtime = 1d;\n// Define a baseline of normal user behavior\nlet userBaseline = OfficeActivity\n| where TimeGenerated between(ago(starttime)..ago(endtime))\n| where RecordType =~ szSharePointFileOperation\n| where Operation in~ (szOperations)\n| where isnotempty(UserAgent)\n| summarize Count = count() by UserId, Operation, Site_Url, ClientIP\n| summarize AvgCount = avg(Count) by UserId, Operation, Site_Url, ClientIP;\n// Get recent user activity\nlet recentUserActivity = OfficeActivity\n| where TimeGenerated > ago(endtime)\n| where RecordType =~ szSharePointFileOperation\n| where Operation in~ (szOperations)\n| where isnotempty(UserAgent)\n| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), RecentCount = count() by UserId, UserType, Operation, Site_Url, ClientIP, OfficeObjectId, OfficeWorkload, UserAgent;\n// Join the baseline and recent activity, and calculate the deviation\nlet UserBehaviorAnalysis = userBaseline | join kind=inner (recentUserActivity) on UserId, Operation, Site_Url, ClientIP\n| extend Deviation = abs(RecentCount - AvgCount) / AvgCount;\n// Filter for significant deviations\nUserBehaviorAnalysis\n| where Deviation > threshold\n| project StartTimeUtc, EndTimeUtc, UserId, UserType, Operation, ClientIP, Site_Url, OfficeObjectId, OfficeWorkload, UserAgent, Deviation, Count=RecentCount\n| order by Count desc, ClientIP asc, Operation asc, UserId asc\n| extend AccountName = tostring(split(UserId, \"@\")[0]), AccountUPNSuffix = tostring(split(UserId, \"@\")[1])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1030"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "4b11568b-3f5f-4ba1-80c8-7f1dc8390eb7",
+        "templateVersion": "2.0.4",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserId"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "AccountUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "ClientIP"
+              }
+            ]
+          },
+          {
+            "entityType": "URL",
+            "fieldMappings": [
+              {
+                "identifier": "Url",
+                "columnName": "Site_Url"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/e027d3a0-aa5e-5426-b3a5-52f7de8da0bc')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/e027d3a0-aa5e-5426-b3a5-52f7de8da0bc')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Scheduled Task Hide",
+        "description": "Identifies malware hiding scheduled tasks by deleting the SD (Security Descriptor) value, making tasks disappear from schtasks /query and Task Scheduler.\n Enable registry auditing policy and auditing on HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree.\n Reference: https://www.microsoft.com/en-us/security/blog/2022/04/12/tarrask-malware-uses-scheduled-tasks-for-defense-evasion/\n Reference: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/audit-registry",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "SecurityEvent\n| where EventID == 4657\n| extend EventData = parse_xml(EventData).EventData.Data\n| mv-expand bagexpansion=array EventData\n| evaluate bag_unpack(EventData)\n| extend Key = tostring(column_ifexists('@Name', \"\")), Value = column_ifexists('#text', \"\")\n| evaluate pivot(Key, any(Value), TimeGenerated, TargetAccount, Computer, EventSourceName, Channel, Task, Level, EventID, Activity, TargetLogonId, SourceComputerId, EventOriginId, Type, _ResourceId, TenantId, SourceSystem, ManagementGroupName, IpAddress, Account)\n| extend ObjectName = column_ifexists('ObjectName', \"\"), OperationType = column_ifexists('OperationType', \"\"), ObjectValueName = column_ifexists('ObjectValueName', \"\")\n| where ObjectName has 'Schedule\\\\TaskCache\\\\Tree' and ObjectValueName == \"SD\" and OperationType == \"%%1906\"  // %%1906 - Registry value deleted\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend AccountName = tostring(split(TargetAccount, @'\\')[1]), AccountNTDomain = tostring(split(TargetAccount, @'\\')[0])\n| extend timestamp = TimeGenerated\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1562"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "6dd2629c-534b-4275-8201-d7968b4fa77e",
+        "templateVersion": "3.1.2",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "TargetAccount"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountNTDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "HostNameDomain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/12918551-254a-5a7d-93be-c0016e412e32')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/12918551-254a-5a7d-93be-c0016e412e32')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Non Domain Controller Active Directory Replication",
+        "description": "This query detects potential attempts by non-computer accounts (non domain controllers) to retrieve/synchronize an active directory object leveraging directory replication services (DRS).\nA Domain Controller (computer account) would usually be performing these actions in a domain environment. Another detection rule can be created to cover domain controllers accounts doing at rare times.\nA domain user with privileged permissions to use directory replication services is rare.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// Enter a reference list of hostnames for your DC servers\n//let DCServersList = dynamic ([\"DC01.simulandlabs.com\",\"DC02.simulandlabs.com\"]);\nSecurityEvent\n//| where Computer in (DCServersList)\n| where EventID == 4662 and ObjectServer == 'DS'\n| where AccountType != 'Machine'\n| where Properties has '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes\n    or Properties has '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2' //DS-Replication-Get-Changes-All\n    or Properties has '89e95b76-444d-4c62-991a-0facbeda640c' //DS-Replication-Get-Changes-In-Filtered-Set\n| project TimeGenerated, Account, Activity, Properties, SubjectLogonId, Computer\n| join kind=leftouter\n(\n    SecurityEvent\n    //| where Computer in (DCServersList)\n    | where EventID == 4624 and LogonType == 3\n    | where AccountType != 'Machine'\n    | project TargetLogonId, IpAddress, Computer\n)\non $left.SubjectLogonId == $right.TargetLogonId and $left.Computer == $right.Computer\n| project-reorder TimeGenerated, Computer, Account, IpAddress\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend AccountNTDomain = tostring(split(Account, \"\\\\\")[0]), AccountName = tostring(split(Account, \"\\\\\")[1])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1003"
+        ],
+        "subTechniques": [
+          "T1003.006"
+        ],
+        "alertRuleTemplateName": "b9d2eebc-5dcb-4888-8165-900db44443ab",
+        "templateVersion": "1.0.6",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P7D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountNTDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "HostNameDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IpAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/d04e7d8b-63d6-572c-837f-6abd22595460')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/d04e7d8b-63d6-572c-837f-6abd22595460')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] LaZagne Credential Theft",
+        "description": "LaZagne is a popular open-source tool used to recover passwords stored on a local computer. It has been used in ransomware attacks to steal credentials and escalate privileges. This query looks for the execution of LaZagne.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "DeviceProcessEvents \n| where FileName =~ 'reg.exe'\n| where ProcessCommandLine has_all('save','hklm','sam')\n| project DeviceId, DeviceName, TimeGenerated, InitiatingProcessId, InitiatingProcessFileName, ProcessId, FileName, ProcessCommandLine\n| extend HostName = iff(DeviceName has '.', substring(DeviceName, 0, indexof(DeviceName, '.')), DeviceName)\n| extend DnsDomain = iff(DeviceName has '.', substring(DeviceName, indexof(DeviceName, '.') + 1), \"\")\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1003"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "7d0d3050-8dac-4b83-bfae-902f7dc0c21c",
+        "templateVersion": "1.0.0",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "ProcessId",
+                "columnName": "ProcessId"
+              },
+              {
+                "identifier": "CommandLine",
+                "columnName": "ProcessCommandLine"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/fd4661f3-a7c5-558f-bd07-8692dbaa2ceb')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/fd4661f3-a7c5-558f-bd07-8692dbaa2ceb')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Credential added after admin consented to Application",
+        "description": "This query will identify instances where Service Principal credentials were added to an application by one user after the application was granted admin consent rights by another user.\n If a threat actor obtains access to an account with sufficient privileges and adds the alternate authentication material triggering this event, the threat actor can now authenticate as the Application or Service Principal using this credential.\n Additional information on OAuth Credential Grants can be found in RFC 6749 Section 4.4 or https://docs.microsoft.com/azure/active-directory/develop/v2-oauth2-client-creds-grant-flow.\n For further information on AuditLogs please see https://docs.microsoft.com/azure/active-directory/reports-monitoring/reference-audit-activities",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let auditLookbackStart = 2d;\nlet auditLookbackEnd = 1d;\nAuditLogs\n| where TimeGenerated >= ago(auditLookbackStart)\n| where OperationName =~ \"Consent to application\" \n| where Result =~ \"success\"\n| mv-apply TargetResource = TargetResources on \n  (\n      where TargetResource.type =~ \"ServicePrincipal\"\n      | extend targetResourceName = tostring(TargetResource.displayName),\n               targetResourceID = tostring(TargetResource.id),\n               targetResourceType = tostring(TargetResource.type),\n               targetModifiedProp = TargetResource.modifiedProperties\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"ConsentContext.IsAdminConsent\"\n      | extend isAdminConsent = trim(@'\"',tostring(Property.newValue))\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"ConsentAction.Permissions\"\n      | extend Consent_TargetPermissions = trim(@'\"',tostring(Property.newValue))\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"TargetId.ServicePrincipalNames\"\n      | extend Consent_TargetServicePrincipalNames = tostring(extract_all(@\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\",trim(@'\"',tostring(Property.newValue)))[0])\n  )\n| extend Consent_InitiatingUserOrApp = iff(isnotempty(InitiatedBy.user.userPrincipalName),tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))\n| extend Consent_InitiatingAppName = tostring(InitiatedBy.app.displayName)\n| extend Consent_InitiatingAppServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId)\n| extend Consent_InitiatingUserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)\n| extend Consent_InitiatingAadUserId = tostring(InitiatedBy.user.id)\n| extend Consent_InitiatingIpAddress = tostring(iff(isnotempty(InitiatedBy.user.ipAddress), InitiatedBy.user.ipAddress, InitiatedBy.app.ipAddress))\n| join kind=inner ( \nAuditLogs\n| where TimeGenerated  >= ago(auditLookbackEnd)\n| where OperationName =~ \"Add service principal credentials\"\n| where Result =~ \"success\"\n| mv-apply TargetResource = TargetResources on \n  (\n      where TargetResource.type =~ \"ServicePrincipal\"\n      | extend targetResourceName = tostring(TargetResource.displayName),\n               targetResourceID = tostring(TargetResource.id),\n               targetModifiedProp = TargetResource.modifiedProperties\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"KeyDescription\"\n      | extend Credential_TargetKeyDescription = trim(@'\"',tostring(Property.newValue))\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"Included Updated Properties\"\n      | extend UpdatedProperties = trim(@'\"',tostring(Property.newValue))\n  )\n| mv-apply Property = targetModifiedProp on \n  (\n      where Property.displayName =~ \"TargetId.ServicePrincipalNames\"\n      | extend Credential_TargetServicePrincipalNames = tostring(extract_all(@\"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\",trim(@'\"',tostring(Property.newValue)))[0])\n  )\n| extend Credential_InitiatingUserOrApp = iff(isnotempty(InitiatedBy.user.userPrincipalName),tostring(InitiatedBy.user.userPrincipalName), tostring(InitiatedBy.app.displayName))\n| extend Credential_InitiatingAppName = tostring(InitiatedBy.app.displayName)\n| extend Credential_InitiatingAppServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId)\n| extend Credential_InitiatingUserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)\n| extend Credential_InitiatingAadUserId = tostring(InitiatedBy.user.id)\n| extend Credential_InitiatingIpAddress = tostring(iff(isnotempty(InitiatedBy.user.ipAddress), InitiatedBy.user.ipAddress, InitiatedBy.app.ipAddress))\n) on targetResourceName, targetResourceID\n| extend TimeConsent = TimeGenerated, TimeCred = TimeGenerated1\n| where TimeConsent < TimeCred \n| project TimeConsent, TimeCred, targetResourceName, targetResourceType, isAdminConsent, \nConsent_InitiatingUserOrApp, Consent_TargetServicePrincipalNames, Consent_TargetPermissions,\nConsent_InitiatingAppName, Consent_InitiatingAppServicePrincipalId, Consent_InitiatingUserPrincipalName, Consent_InitiatingAadUserId, Consent_InitiatingIpAddress,\nCredential_InitiatingUserOrApp, Credential_TargetServicePrincipalNames, Credential_TargetKeyDescription,\nCredential_InitiatingAppName, Credential_InitiatingAppServicePrincipalId, Credential_InitiatingUserPrincipalName, Credential_InitiatingAadUserId, Credential_InitiatingIpAddress\n| extend Consent_AccountName = tostring(split(Consent_InitiatingUserPrincipalName, \"@\")[0]), Consent_UPNSuffix = tostring(split(Consent_InitiatingUserPrincipalName, \"@\")[1])\n| extend Credential_AccountName = tostring(split(Credential_InitiatingUserPrincipalName, \"@\")[0]), Credential_UPNSuffix = tostring(split(Credential_InitiatingUserPrincipalName, \"@\")[1])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess",
+          "Persistence",
+          "PrivilegeEscalation"
+        ],
+        "techniques": [
+          "T1098",
+          "T1555"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "707494a5-8e44-486b-90f8-155d1797a8eb",
+        "templateVersion": "1.1.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P2D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Consent_InitiatingAppName"
+              },
+              {
+                "identifier": "AadUserId",
+                "columnName": "Consent_InitiatingAppServicePrincipalId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "Credential_InitiatingAppName"
+              },
+              {
+                "identifier": "AadUserId",
+                "columnName": "Credential_InitiatingAppServicePrincipalId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Consent_InitiatingUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Consent_AccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "Consent_UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "Consent_InitiatingAadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Credential_InitiatingUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Credential_AccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "Credential_UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "Credential_InitiatingAadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "Consent_InitiatingIpAddress"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "Credential_InitiatingIpAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/888f796b-a4e3-5ae3-8d48-6791e09c92da')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/888f796b-a4e3-5ae3-8d48-6791e09c92da')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Password spray attack against ADFSSignInLogs",
+        "description": "Identifies evidence of password spray activity against Connect Health for AD FS sign-in events by looking for failures from multiple accounts from the same IP address within a time window. Reference: https://github.com/Azure/Azure-Sentinel/blob/master/Solutions/Microsoft%20Entra%20ID/ADFSSignInLogsPasswordSpray.md",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let queryfrequency = 30m;\nlet accountthreshold = 10;\nlet successCodes = dynamic([0, 50144]);\nADFSSignInLogs\n| extend IngestionTime = ingestion_time()\n| where IngestionTime > ago(queryfrequency)\n| where not(todynamic(AuthenticationDetails)[0].authenticationMethod == \"Integrated Windows Authentication\")\n| summarize\n    DistinctFailureCount = dcountif(UserPrincipalName, ResultType !in (successCodes)),\n    DistinctSuccessCount = dcountif(UserPrincipalName, ResultType in (successCodes)),\n    SuccessAccounts = make_set_if(UserPrincipalName, ResultType in (successCodes), 250),\n    arg_min(TimeGenerated, *)\n    by IPAddress\n| where DistinctFailureCount > DistinctSuccessCount and DistinctFailureCount >= accountthreshold\n//| extend SuccessAccounts = iff(array_length(SuccessAccounts) != 0, SuccessAccounts, dynamic([\"null\"]))\n//| mv-expand SuccessAccounts\n| project TimeGenerated, Category, OperationName, IPAddress, DistinctFailureCount, DistinctSuccessCount, SuccessAccounts, AuthenticationRequirement, ConditionalAccessStatus, IsInteractive, UserAgent, NetworkLocationDetails, DeviceDetail, TokenIssuerType, TokenIssuerName, ResourceIdentity\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "5533fe80-905e-49d5-889a-df27d2c3976d",
+        "templateVersion": "1.0.2",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT30M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IPAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/927bdaa2-4ef8-5201-be58-e2d83839f7cf')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/927bdaa2-4ef8-5201-be58-e2d83839f7cf')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] New access credential added to Application or Service Principal",
+        "description": "This will alert when an admin or app owner account adds a new credential to an Application or Service Principal where a verify KeyCredential was already present for the app.\nIf a threat actor obtains access to an account with sufficient privileges and adds the alternate authentication material triggering this event, the threat actor can now authenticate as the Application or Service Principal using this credential.\nAdditional information on OAuth Credential Grants can be found in RFC 6749 Section 4.4 or https://docs.microsoft.com/azure/active-directory/develop/v2-oauth2-client-creds-grant-flow\nFor further information on AuditLogs please see https://docs.microsoft.com/azure/active-directory/reports-monitoring/reference-audit-activities.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "AuditLogs\n| where OperationName has_any (\"Add service principal\", \"Certificates and secrets management\") // captures \"Add service principal\", \"Add service principal credentials\", and \"Update application - Certificates and secrets management\" events\n| where Result =~ \"success\"\n| where tostring(InitiatedBy.user.userPrincipalName) has \"@\" or tostring(InitiatedBy.app.displayName) has \"@\"\n| mv-apply TargetResource = TargetResources on \n  (\n      where TargetResource.type =~ \"Application\"\n      | extend targetDisplayName = tostring(TargetResource.displayName),\n               targetId = tostring(TargetResource.id),\n               targetType = tostring(TargetResource.type),\n               keyEvents = TargetResource.modifiedProperties\n  )\n| mv-apply Property = keyEvents on \n  (\n      where Property.displayName =~ \"KeyDescription\"\n      | extend new_value_set = parse_json(tostring(Property.newValue)),\n               old_value_set = parse_json(tostring(Property.oldValue))\n  )\n| where old_value_set != \"[]\"\n| extend diff = set_difference(new_value_set, old_value_set)\n| where isnotempty(diff)\n| parse diff with * \"KeyIdentifier=\" keyIdentifier:string \",KeyType=\" keyType:string \",KeyUsage=\" keyUsage:string \",DisplayName=\" keyDisplayName:string \"]\" *\n| where keyUsage =~ \"Verify\"\n| mv-apply AdditionalDetail = AdditionalDetails on \n  (\n      where AdditionalDetail.key =~ \"User-Agent\"\n      | extend UserAgent = tostring(AdditionalDetail.value)\n  )\n| extend InitiatingAppName = tostring(InitiatedBy.app.displayName)\n| extend InitiatingAppServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId)\n| extend InitiatingUserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)\n| extend InitiatingAadUserId = tostring(InitiatedBy.user.id)\n| extend InitiatingIpAddress = tostring(iff(isnotempty(InitiatedBy.user.ipAddress), InitiatedBy.user.ipAddress, InitiatedBy.app.ipAddress))\n// The below line is currently commented out but Microsoft Sentinel users can modify this query to show only Application or only Service Principal events in their environment\n//| where targetType =~ \"Application\" // or targetType =~ \"ServicePrincipal\"\n| project-away diff, new_value_set, old_value_set\n| project-reorder TimeGenerated, OperationName, InitiatingAppName, InitiatingAppServicePrincipalId, InitiatingUserPrincipalName, InitiatingAadUserId, InitiatingIpAddress, UserAgent, targetDisplayName, targetId, targetType, keyDisplayName, keyType, keyUsage, keyIdentifier, CorrelationId, TenantId\n| extend Name = tostring(split(InitiatingUserPrincipalName,'@',0)[0]), UPNSuffix = tostring(split(InitiatingUserPrincipalName,'@',1)[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1550"
+        ],
+        "subTechniques": [
+          "T1550.001"
+        ],
+        "alertRuleTemplateName": "79566f41-df67-4e10-a703-c38a6213afd8",
+        "templateVersion": "1.1.2",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "InitiatingUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "InitiatingIpAddress"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAppServicePrincipalId"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/0144fef3-9667-5bb4-90a1-06ce24222963')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0144fef3-9667-5bb4-90a1-06ce24222963')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Potential Password Spray Attack (Uses Authentication Normalization)",
+        "description": "This query searches for failed attempts to log in from more than 15 various users within a 5 minute timeframe from the same source. This is a potential indication of a password spray attack\n To use this analytics rule, make sure you have deployed the [ASIM normalization parsers](https://aka.ms/ASimAuthentication)",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let FailureThreshold = 15;\n_Im_Authentication\n| where EventType== 'Logon' and  EventResult== 'Failure'\n// reason: creds \n| where EventResultDetails in ('No such user or password', 'Incorrect password')\n| summarize UserCount=dcount(TargetUserId), Vendors=make_set(EventVendor), Products=make_set(EventVendor)\n  , Users = make_set(TargetUserId,100) \n    by SrcIpAddr, SrcGeoCountry, bin(TimeGenerated, 5m)\n| where UserCount > FailureThreshold\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "6a2e2ff4-5568-475e-bef2-b95f12b9367b",
+        "templateVersion": "1.1.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SrcIpAddr"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/52cacdba-6998-5c2e-8351-9513645376f2')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/52cacdba-6998-5c2e-8351-9513645376f2')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Detect Potential Kerberoast Activities",
+        "description": "This query aim to detect if someone requests service tickets (where count => maxcount)\nThe query requires trimming to set a baseline level for MaxCount  \nMitre Technique: Kerberoasting (T1558.003)\n@MattiasBorg82",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let MaxCount = 70; //Number of requests per 2 minute timeframe, depending on org size.\nIdentityLogonEvents\n| where ActionType == \"LogonSuccess\"\n| where Protocol == \"Kerberos\"\n| extend json = todynamic(parse_json(tostring(AdditionalFields)))\n| extend SPN = json.Spns,\n       AttackTechniques = json.AttackTechniques\n      | project-away json\n| where isnotempty(SPN)\n| where AttackTechniques has \"T1558.003\"\n| mv-expand SPN\n        | extend SPNType = tostring(extract(@\"^\\w+\",0,tostring(SPN)))\n| distinct tostring(SPN), DeviceName, AccountUpn, AccountSid, bin(TimeGenerated, 2m), ReportId, tostring(AttackTechniques)\n| summarize count(), SPNS=(make_list(SPN, 100000)),ReportId=tostring((make_list(ReportId, 100000))[0]) by AccountUpn,AccountSid,DeviceName, bin(TimeGenerated, 2m), tostring(AttackTechniques)\n| extend SPNS = (replace_regex(tostring(SPNS), @'[^\\w+-\\/]+', '')) \n| where count_ >= MaxCount\n| extend HostName = iff(DeviceName has '.', substring(DeviceName, 0, indexof(DeviceName, '.')), DeviceName)\n| extend DnsDomain = iff(DeviceName has '.', substring(DeviceName, indexof(DeviceName, '.') + 1), \"\")\n| extend AccountDomain = tostring(split(AccountUpn, '@')[1]), AccountName = tostring(split(AccountUpn, '@')[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1558"
+        ],
+        "subTechniques": [
+          "T1558.003"
+        ],
+        "alertRuleTemplateName": "12134de5-361b-427c-a1a0-d43f40a593c4",
+        "templateVersion": "1.0.0",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "AccountUpn"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "AccountDomain"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/3aa1fbeb-3c08-5ef5-af8f-9200373ca005')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/3aa1fbeb-3c08-5ef5-af8f-9200373ca005')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Failed AzureAD logons but success logon to host",
+        "description": "Identifies a list of IP addresses with a minimum number (default of 5) of failed logon attempts to Microsoft Entra ID.\nUses that list to identify any successful remote logons to hosts from these IPs within the same timeframe.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "//Adjust this threshold to fit the environment\nlet signin_threshold = 5;\n//Make a list of all IPs with failed signins to AAD above our threshold\nlet aadFunc = (tableName:string){\nlet suspicious_signins =\ntable(tableName)\n| where ResultType !in (\"0\", \"50125\", \"50140\")\n| where IPAddress !in ('127.0.0.1', '::1', '')\n| summarize count() by IPAddress\n| where count_ > signin_threshold\n| summarize make_set(IPAddress);\n//See if any of these IPs have sucessfully logged into *nix hosts\nlet linux_logons =\nSyslog\n| where Facility contains \"auth\" and ProcessName != \"sudo\"\n| where SyslogMessage has \"Accepted\"\n| extend SourceIP = extract(\"(([0-9]{1,3})\\\\.([0-9]{1,3})\\\\.([0-9]{1,3})\\\\.(([0-9]{1,3})))\",1,SyslogMessage)\n| where SourceIP in (suspicious_signins)\n| extend Reason = \"Multiple failed AAD logins from IP address\"\n| project TimeGenerated, Computer, HostIP, IpAddress = SourceIP, SyslogMessage, Facility, ProcessName, Reason;\n//See if any of these IPs have sucessfully logged into Windows hosts\nlet win_logons = (union isfuzzy=true\n(SecurityEvent\n| where EventID == 4624\n| where LogonType in (10, 7, 3)\n| where IpAddress != \"-\"\n| where IpAddress in (suspicious_signins)\n| extend Reason = \"Multiple failed AAD logins from IP address\"\n| project TimeGenerated, Account, AccountType, Computer, Activity, EventID, LogonProcessName, IpAddress, LogonTypeName, TargetUserSid, TargetUserName, TargetDomainName, _ResourceId, Reason\n),\n(WindowsEvent\n| where EventID == 4624 and has_any_ipv4(EventData, toscalar(suspicious_signins))\n| extend LogonType = tostring(EventData.LogonType)\n| where LogonType in (10, 7, 3)\n| extend  IpAddress = tostring(EventData.IpAddress)\n| where IpAddress != \"-\"\n| where IpAddress in (suspicious_signins)\n| extend Reason = \"Multiple failed AAD logins from IP address\"\n| extend Activity = \"4624 - An account was successfully logged on.\"\n| extend TargetUserName = tostring(EventData.TargetUserName), TargetDomainName = tostring(EventData.TargetDomainName)\n| extend Account =  strcat(TargetDomainName,\"\\\\\", TargetUserName)\n| extend TargetUserSid = tostring(EventData.TargetUserSid)\n| extend TargetAccount = strcat(EventData.TargetDomainName,\"\\\\\", EventData.TargetUserName)\n| extend AccountType =case(Account endswith \"$\" or TargetUserSid in (\"S-1-5-18\", \"S-1-5-19\", \"S-1-5-20\"), \"Machine\", isempty(TargetUserSid), \"\", \"User\")\n| extend LogonProcessName = tostring(EventData.LogonProcessName)\n| project TimeGenerated, Account, AccountType, Computer, Activity, EventID, LogonProcessName, IpAddress, TargetUserSid, TargetUserName, TargetDomainName, _ResourceId, Reason\n)\n);\nunion isfuzzy=true linux_logons,win_logons\n| extend timestamp = TimeGenerated\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex+1), Computer)\n};\nlet aadSignin = aadFunc(\"SigninLogs\");\nlet aadNonInt = aadFunc(\"AADNonInteractiveUserSignInLogs\");\nunion isfuzzy=true aadSignin, aadNonInt\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "InitialAccess",
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1078",
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "8ee967a2-a645-4832-85f4-72b635bcb3a6",
+        "templateVersion": "1.3.2",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "TargetUserName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "TargetDomainName"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "HostNameDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "AzureID",
+                "columnName": "_ResourceId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IpAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/31bd09c5-4495-5918-be55-e689dcc9897f')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/31bd09c5-4495-5918-be55-e689dcc9897f')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Remote File Creation with PsExec",
+        "description": "This query was originally published in the threat analytics report, Ryuk ransomware. There is also a related blog.\nRyuk is human-operated ransomware. Much like DoppelPaymer ransomware, Ryuk is spread manually, often on networks that are already infected with Trickbot.\nRyuk operators use PsExec to manually spread the ransomware to other devices.\nThe following query detects remote file creation events that might indicate an active attack.\nThe See also section below lists links to other queries associated with Ryuk ransomware.\nReferences:\nhttps://www.microsoft.com/security/blog/2020/03/05/human-operated-ransomware-attacks-a-preventable-disaster/\nhttps://www.microsoft.com/en-us/wdsi/threats/malware-encyclopedia-description?Name=Ransom:Win32/Ryuk.AA\nhttps://www.microsoft.com/security/blog/2020/03/05/human-operated-ransomware-attacks-a-preventable-disaster/\nhttps://docs.microsoft.com/sysinternals/downloads/psexec",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// Find PsExec creating multiple files on remote machines in a 10-minute window\nDeviceFileEvents\n// Looking for PsExec by accepteula command flag\n| where InitiatingProcessCommandLine has \"accepteula\"\n// Remote machines and file is exe\n| where FolderPath has \"\\\\\\\\\" and FileName endswith \".exe\"\n| extend Exe = countof(InitiatingProcessCommandLine, \".exe\")\n// Checking to see if command line has 2 .exe or .bat\n| where InitiatingProcessCommandLine !has \".ps1\" and Exe > 1 or\nInitiatingProcessCommandLine has \".bat\"\n// Exclusions: Remove the following line to widen scope of AHQ\n| where not(InitiatingProcessCommandLine has_any(\"batch\", \"auditpol\",\n\"script\", \"scripts\", \"illusive\", \"rebootrequired\"))\n| summarize FileCount = dcount(FolderPath), make_set(SHA1, 100000), make_set(FolderPath, 100000),\nmake_set(FileName, 100000), make_set(InitiatingProcessCommandLine, 100000) by DeviceId, DeviceName,\nTimeWindow=bin(TimeGenerated, 10m), InitiatingProcessFileName\n| where FileCount > 4\n| extend HostName = iff(DeviceName has '.', substring(DeviceName, 0, indexof(DeviceName, '.')), DeviceName)\n| extend DnsDomain = iff(DeviceName has '.', substring(DeviceName, indexof(DeviceName, '.') + 1), \"\")\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "LateralMovement"
+        ],
+        "techniques": [
+          "T1570"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "35ab0d58-baab-4154-87ed-fa2f69797e9e",
+        "templateVersion": "1.0.0",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "DnsDomain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/62dcaa7e-767a-5d0a-8824-6aee97128863')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/62dcaa7e-767a-5d0a-8824-6aee97128863')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Correlate Unfamiliar sign-in properties & atypical travel alerts",
+        "description": "The combination of an Unfamiliar sign-in properties alert and an Atypical travel alert about the same user within a +10m or -10m window is considered a high severity incident.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// We can use this configuration TimeDeltaInMinutes if you want to chnage the time window that we try to match the alerts\nlet TimeDeltaInMinutes = 10;\nlet Alert_UnfamiliarSignInProps = \nSecurityAlert\n| where TimeGenerated > ago(1d)\n| where ProductName =~ \"Azure Active Directory Identity Protection\"\n| where AlertName =~ \"Unfamiliar sign-in properties\"\n| mv-expand Entity = todynamic(Entities)\n| where Entity.Type =~ \"account\"\n| extend AadTenantId = tostring(Entity.AadTenantId)\n| extend AadUserId = tostring(Entity.AadUserId)\n| join kind=inner (\nIdentityInfo\n| distinct AccountTenantId, AccountObjectId, AccountUPN, AccountDisplayName\n| extend UserName = AccountDisplayName\n| extend UserAccount = AccountUPN\n| where isnotempty(AccountDisplayName) and isnotempty(UserAccount)\n| project AccountTenantId, AccountObjectId, UserAccount, UserName\n)\non\n$left.AadTenantId == $right.AccountTenantId,\n$left.AadUserId == $right.AccountObjectId\n| extend CompromisedEntity = iff(CompromisedEntity == \"N/A\" or isempty(CompromisedEntity), UserAccount, CompromisedEntity)\n| extend Alert_UnfamiliarSignInProps_Time = TimeGenerated\n| extend Alert_UnfamiliarSignInProps_Name = AlertName\n| extend Alert_UnfamiliarSignInProps_Severity = AlertSeverity\n| project AadTenantId, AadUserId, AccountTenantId, AccountObjectId, Alert_UnfamiliarSignInProps_Name, Alert_UnfamiliarSignInProps_Severity, Alert_UnfamiliarSignInProps_Time, UserAccount, UserName\n;\nlet Alert_AtypicalTravels = \nSecurityAlert\n| where TimeGenerated > ago(1d)\n| where ProductName =~ \"Azure Active Directory Identity Protection\"\n| where AlertName =~ \"Atypical travel\"\n| mv-expand Entity = todynamic(Entities)\n| where Entity.Type =~ \"account\"\n| extend AadTenantId = tostring(Entity.AadTenantId)\n| extend AadUserId = tostring(Entity.AadUserId)\n| join kind=inner (\nIdentityInfo\n| distinct AccountTenantId, AccountObjectId, AccountUPN, AccountDisplayName\n| extend UserName = AccountDisplayName\n| extend UserAccount = AccountUPN\n| where isnotempty(AccountDisplayName) and isnotempty(UserAccount)\n| project AccountTenantId, AccountObjectId, UserAccount, UserName\n)\non\n$left.AadTenantId == $right.AccountTenantId,\n$left.AadUserId == $right.AccountObjectId\n| extend CompromisedEntity = iff(CompromisedEntity == \"N/A\" or isempty(CompromisedEntity), UserAccount, CompromisedEntity)\n| extend Alert_AtypicalTravels_Time = TimeGenerated\n| extend Alert_AtypicalTravels_Name = AlertName\n| extend Alert_AtypicalTravels_Severity = AlertSeverity\n| extend ExtendedProperties_json= parse_json(ExtendedProperties)\n| extend CurrentLocation = tostring(ExtendedProperties_json.[\"Current Location\"])\n| extend PreviousLocation = tostring(ExtendedProperties_json.[\"Previous Location\"])\n| extend CurrentIPAddress = tostring(ExtendedProperties_json.[\"Current IP Address\"])\n| extend PreviousIPAddress = tostring(ExtendedProperties_json.[\"Previous IP Address\"])\n| extend Comments = tostring(ExtendedProperties_json.Comments)\n| extend RiskDetail = extract(@\"(?i)risk detail:\\s*(.+)$\", 1, Comments)\n| where isempty(RiskDetail) or RiskDetail !contains \"admin\"\n| project AadTenantId, AadUserId, AccountTenantId, AccountObjectId, Alert_AtypicalTravels_Name, Alert_AtypicalTravels_Severity, Alert_AtypicalTravels_Time, CurrentIPAddress, PreviousIPAddress, CurrentLocation, Comments, PreviousLocation, UserAccount, UserName, CompromisedEntity\n;\nAlert_UnfamiliarSignInProps\n| join kind=inner Alert_AtypicalTravels on UserAccount\n| where abs(datetime_diff('minute', Alert_UnfamiliarSignInProps_Time, Alert_AtypicalTravels_Time)) <= TimeDeltaInMinutes\n| extend TimeDelta = Alert_UnfamiliarSignInProps_Time - Alert_AtypicalTravels_Time\n| project UserAccount, AadUserId, Alert_UnfamiliarSignInProps_Name, Alert_UnfamiliarSignInProps_Severity, Alert_UnfamiliarSignInProps_Time, Alert_AtypicalTravels_Name, Alert_AtypicalTravels_Severity, Alert_AtypicalTravels_Time, TimeDelta, CurrentLocation, PreviousLocation, CurrentIPAddress, PreviousIPAddress, Comments, UserName\n| extend UserEmailName = split(UserAccount,'@')[0], UPNSuffix = split(UserAccount,'@')[1]\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "InitialAccess"
+        ],
+        "techniques": [
+          "T1078"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "a3df4a32-4805-4c6d-8699-f3c888af2f67",
+        "templateVersion": "1.0.9",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserAccount"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "UserEmailName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "AadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "CurrentIPAddress"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "PreviousIPAddress"
+              }
+            ]
+          }
+        ],
+        "customDetails": {
+          "Alert1_Name": "Alert_UnfamiliarSignInProps_Name",
+          "Alert1_Time": "Alert_UnfamiliarSignInProps_Time",
+          "Alert1_Severity": "Alert_UnfamiliarSignInProps_Severity",
+          "Alert2_Name": "Alert_AtypicalTravels_Name",
+          "Alert2_Time": "Alert_AtypicalTravels_Time",
+          "Alert2_Severity": "Alert_AtypicalTravels_Severity",
+          "TimeDelta": "TimeDelta",
+          "CurrentLocation": "CurrentLocation",
+          "PreviousLocation": "PreviousLocation",
+          "CurrentIPAddress": "CurrentIPAddress",
+          "PreviousIPAddress": "PreviousIPAddress"
+        }
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/4814e6b9-37ee-5123-ba3d-a062b7e28ca4')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/4814e6b9-37ee-5123-ba3d-a062b7e28ca4')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Gain Code Execution on ADFS Server via SMB + Remote Service or Scheduled Task",
+        "description": "This query detects instances where an attacker has gained the ability to execute code on an ADFS Server through SMB and Remote Service or Scheduled Task.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let timeframe = 1d;\n// Adjust for a longer timeframe for identifying ADFS Servers\nlet lookback = 6d;\n// Identify ADFS Servers\nlet ADFS_Servers = (\nSecurityEvent\n| where TimeGenerated > ago(timeframe+lookback)\n| where EventID == 4688 and SubjectLogonId != \"0x3e4\"\n| where NewProcessName has \"Microsoft.IdentityServer.ServiceHost.exe\"\n| distinct Computer\n);\nSecurityEvent\n| where TimeGenerated > ago(timeframe)\n| where Computer in~ (ADFS_Servers)\n| where Account !endswith \"$\"\n// Check for scheduled task events\n| where EventID in (4697, 4698, 4699, 4700, 4701, 4702)\n| extend EventDataParsed = parse_xml(EventData)\n| extend SubjectLogonId = tostring(EventDataParsed.EventData.Data[3][\"#text\"])\n// Check specifically for access to IPC$ share and PIPE\\svcctl and PIPE\\atsvc for Service Control Services and Schedule Control Services\n| union (\n    SecurityEvent\n    | where TimeGenerated > ago(timeframe)\n    | where Computer in~ (ADFS_Servers)\n    | where Account !endswith \"$\"\n    | where EventID == 5145\n    | where RelativeTargetName =~ \"svcctl\" or RelativeTargetName  =~ \"atsvc\"\n)\n// Check for lateral movement\n| join kind=inner\n(SecurityEvent\n| where TimeGenerated > ago(timeframe)\n| where Account !endswith \"$\"\n| where EventID == 4624 and LogonType == 3\n) on $left.SubjectLogonId == $right.TargetLogonId\n| project TimeGenerated, Account, Computer, EventID, RelativeTargetName\n| extend timestamp = TimeGenerated\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend AccountName = tostring(split(Account, @'\\')[1]), AccountNTDomain = tostring(split(Account, @'\\')[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "LateralMovement"
+        ],
+        "techniques": [
+          "T1210"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "12dcea64-bec2-41c9-9df2-9f28461b1295",
+        "templateVersion": "1.2.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P7D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountNTDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "HostNameDomain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/478f68ae-2936-5f54-9a0b-98b4a5a4a36e')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/478f68ae-2936-5f54-9a0b-98b4a5a4a36e')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] New country signIn with correct password",
+        "description": "Identifies an interrupted sign-in session from a country the user has not sign-in before in the last 7 days, where the password was correct. Although the session is interrupted by other controls such as multi factor authentication or conditional access policies, the user credentials should be reset due to logs indicating a correct password was observed during sign-in.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "// Creating a list of successful sign-in by users in the last 7 days.\nlet KnownUserCountry = (\nSigninLogs\n| where TimeGenerated between (ago(7d) .. ago(1d) ) \n| where ResultType == 0\n| summarize KnownCountry = make_set(Location,1048576) by UserPrincipalName\n);\n// Identify sign-ins that are no successful but have the auth details indicating a correct password.\nSigninLogs\n| where TimeGenerated >= ago(1d)\n| where ResultType != 0\n| extend ParseAuth = parse_json(AuthenticationDetails)\n| extend AuthMethod = tostring(ParseAuth.[0].authenticationMethod),\n    PasswordResult = tostring(ParseAuth.[0].authenticationStepResultDetail),\n    AuthSucceeded = tostring(ParseAuth.[0].succeeded)\n| where PasswordResult == \"Correct Password\" or AuthSucceeded == \"true\"\n| where AuthMethod == \"Password\"\n| extend failureReason = tostring(Status.failureReason)\n| summarize NewCountry = make_set(Location,1048576), LastObservedTime = max(TimeGenerated), AppName = make_set(AppDisplayName,1048576) by UserPrincipalName, PasswordResult, AuthSucceeded, failureReason\n// Combining both tables by user\n| join kind=inner KnownUserCountry on UserPrincipalName\n// Compare both arrays and identify if the country has been observed in the past.\n| extend CountryDiff = set_difference(NewCountry,KnownCountry)\n| extend CountryDiffCount = array_length(CountryDiff)\n// Count the new column to only alert if there is a difference between both arrays\n| where CountryDiffCount != 0\n| extend NewCountryEvent = CountryDiff\n// Getting UserName and Domain\n| extend Name = split(UserPrincipalName,\"@\",0),\n    Domain = split(UserPrincipalName,\"@\",1)\n| mv-expand Name,Domain\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "InitialAccess",
+          "CredentialAccess"
+        ],
+        "techniques": [
+          "T1078",
+          "T1110"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "7808c05a-3afd-4d13-998a-a59e2297693f",
+        "templateVersion": "1.0.2",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P7D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "Domain"
+              }
+            ]
+          }
+        ],
+        "customDetails": {
+          "LastObservedTime": "LastObservedTime",
+          "AppName": "AppName",
+          "NewCountryEvent": "NewCountryEvent",
+          "PasswordResult": "PasswordResult",
+          "AuthSucceeded": "AuthSucceeded",
+          "failureReason": "failureReason"
+        }
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/011180f9-2010-5ae8-a9b4-2c9496e46126')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/011180f9-2010-5ae8-a9b4-2c9496e46126')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Privileged Accounts - Sign in Failure Spikes",
+        "description": "Identifies spike in failed sign-ins from Privileged accounts. Privileged accounts list can be based on IdentityInfo UEBA table.\nSpike is determined based on Time series anomaly which will look at historical baseline values.\nRef : https://docs.microsoft.com/azure/active-directory/fundamentals/security-operations-privileged-accounts#things-to-monitor",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let starttime = 14d;\nlet timeframe = 1d;\nlet scorethreshold = 3;\nlet baselinethreshold = 5;\nlet aadFunc = (tableName:string){\n    IdentityInfo\n    | where TimeGenerated > ago(starttime)\n    | summarize arg_max(TimeGenerated, *) by AccountUPN\n    | mv-expand AssignedRoles\n    | where AssignedRoles contains 'Admin' or GroupMembership has \"Admin\"\n    | summarize Roles = make_list(AssignedRoles) by AccountUPN = tolower(AccountUPN)\n    | join kind=inner (\n        table(tableName)\n        | where TimeGenerated between (startofday(ago(starttime))..startofday(now()))\n        | where ResultType != 0\n        | extend UserPrincipalName = tolower(UserPrincipalName)\n    ) on $left.AccountUPN == $right.UserPrincipalName\n    | extend timestamp = TimeGenerated, AccountCustomEntity = UserPrincipalName, Roles = tostring(Roles)\n};\nlet aadSignin = aadFunc(\"SigninLogs\");\nlet aadNonInt = aadFunc(\"AADNonInteractiveUserSignInLogs\");\nlet allSignins = union isfuzzy=true aadSignin, aadNonInt;\nlet TimeSeriesAlerts = \n    allSignins\n    | make-series HourlyCount=count() on TimeGenerated from startofday(ago(starttime)) to startofday(now()) step 1h by UserPrincipalName, Roles\n    | extend (anomalies, score, baseline) = series_decompose_anomalies(HourlyCount, scorethreshold, -1, 'linefit')\n    | mv-expand HourlyCount to typeof(double), TimeGenerated to typeof(datetime), anomalies to typeof(double), score to typeof(double), baseline to typeof(long)\n    // Filtering low count events per baselinethreshold\n    | where anomalies > 0 and baseline > baselinethreshold\n    | extend AnomalyHour = TimeGenerated\n    | project UserPrincipalName, Roles, AnomalyHour, TimeGenerated, HourlyCount, baseline, anomalies, score;\n// Filter the alerts for specified timeframe\nTimeSeriesAlerts\n| where TimeGenerated > startofday(ago(timeframe))\n| join kind=inner ( \n    allSignins\n    | where TimeGenerated > startofday(ago(timeframe))\n    // create a new column and round to hour\n    | extend DateHour = bin(TimeGenerated, 1h)\n    | summarize PartialFailedSignins = count(), LatestAnomalyTime = arg_max(TimeGenerated, *) by bin(TimeGenerated, 1h), OperationName, Category, ResultType, ResultDescription, UserPrincipalName, Roles, UserDisplayName, AppDisplayName, ClientAppUsed, IPAddress, ResourceDisplayName\n) on UserPrincipalName, $left.AnomalyHour == $right.DateHour\n| project LatestAnomalyTime, OperationName, Category, UserPrincipalName, Roles = todynamic(Roles), UserDisplayName, ResultType, ResultDescription, AppDisplayName, ClientAppUsed, UserAgent, IPAddress, Location, AuthenticationRequirement, ConditionalAccessStatus, ResourceDisplayName, PartialFailedSignins, TotalFailedSignins = HourlyCount, baseline, anomalies, score\n| extend Name = tostring(split(UserPrincipalName,'@',0)[0]), UPNSuffix = tostring(split(UserPrincipalName,'@',1)[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "InitialAccess"
+        ],
+        "techniques": [
+          "T1078"
+        ],
+        "subTechniques": [
+          "T1078.004"
+        ],
+        "alertRuleTemplateName": "34c5aff9-a8c2-4601-9654-c7e46342d03b",
+        "templateVersion": "1.1.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "Name"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "UPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IPAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/bacbb8fb-3b3e-5693-aaa2-23fa1ecac16a')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/bacbb8fb-3b3e-5693-aaa2-23fa1ecac16a')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Authentication Methods Changed for Privileged Account",
+        "description": "Identifies authentication methods being changed for a privileged account. This could be an indication of an attacker adding an auth method to the account so they can have continued access.\nRef : https://docs.microsoft.com/azure/active-directory/fundamentals/security-operations-privileged-accounts#things-to-monitor-1",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let queryperiod = 14d;\nlet queryfrequency = 2h;\nlet security_info_actions = dynamic([\"User registered security info\", \"User changed default security info\", \"User deleted security info\", \"Admin updated security info\", \"User reviewed security info\", \"Admin deleted security info\", \"Admin registered security info\"]);\nlet VIPUsers = (\n    IdentityInfo\n    | where TimeGenerated > ago(queryperiod)\n    | mv-expand AssignedRoles\n    | where AssignedRoles contains 'Admin'\n    | summarize by AccountUPN);\nAuditLogs\n| where TimeGenerated > ago(queryfrequency)\n| where Category =~ \"UserManagement\"\n| where ActivityDisplayName in (security_info_actions)\n| extend InitiatingAppName = tostring(InitiatedBy.app.displayName)\n| extend InitiatingAppServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId)\n| extend InitiatingUserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)\n| extend InitiatingAadUserId = tostring(InitiatedBy.user.id)\n| extend InitiatingIpAddress = tostring(iff(isnotempty(InitiatedBy.user.ipAddress), InitiatedBy.user.ipAddress, InitiatedBy.app.ipAddress))\n| mv-apply TargetResource = TargetResources on \n  (\n      where TargetResource.type =~ \"User\"\n      | extend TargetUserPrincipalName = tostring(TargetResource.userPrincipalName)\n  )\n| where TargetUserPrincipalName in~ (VIPUsers)\n// Uncomment the line below if you are experiencing high volumes of Target entities. If this is uncommented, the Target column will not be mapped to an entity.\n//| summarize Start=min(TimeGenerated), End=max(TimeGenerated), Actions = make_set(ResultReason, MaxSize=8), Targets=make_set(Target, MaxSize=256) by Initiator, IP, Result\n// Comment out this line below, if line above is used.\n| summarize Start=min(TimeGenerated), End=max(TimeGenerated), Actions = make_set(ResultReason, MaxSize=8) by InitiatingAppName, InitiatingAppServicePrincipalId, \nInitiatingUserPrincipalName, InitiatingAadUserId, InitiatingIpAddress, TargetUserPrincipalName, Result\n| extend InitiatingAccountName = tostring(split(InitiatingUserPrincipalName, \"@\")[0]), InitiatingAccountUPNSuffix = tostring(split(InitiatingUserPrincipalName, \"@\")[1]), \nTargetName = iff(tostring(TargetUserPrincipalName) has \"[\", \"\", tostring(split(TargetUserPrincipalName,'@',0)[0])), TargetUPNSuffix = iff(tostring(TargetUserPrincipalName) has \"[\", \"\", tostring(split(TargetUserPrincipalName,'@',1)[0]))\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Persistence"
+        ],
+        "techniques": [
+          "T1098"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "694c91ee-d606-4ba9-928e-405a2dd0ff0f",
+        "templateVersion": "1.1.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "PT2H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "InitiatingAppName"
+              },
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAppServicePrincipalId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "InitiatingUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "InitiatingAccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "InitiatingAccountUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "InitiatingIpAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/6ab28a7e-ef23-5e12-aeb3-2b038696c692')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/6ab28a7e-ef23-5e12-aeb3-2b038696c692')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "NRT",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] NRT Security Event log cleared",
+        "description": "Checks for event id 1102 which indicates the security event log was cleared.\nIt uses Event Source Name \"Microsoft-Windows-Eventlog\" to avoid generating false positives from other sources, like AD FS servers for instance.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "SecurityEvent\n| where EventID == 1102 and EventSourceName == \"Microsoft-Windows-Eventlog\"\n| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), EventCount = count() by Computer, Account, EventID, Activity\n| extend HostName = tostring(split(Computer, \".\")[0]), DomainIndex = toint(indexof(Computer, '.'))\n| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)\n| extend AccountName = tostring(split(Account, @'\\')[1]), AccountNTDomain = tostring(split(Account, @'\\')[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1070"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": "508cef41-2cd8-4d40-a519-b04826a9085f",
+        "templateVersion": "1.0.1",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Account"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountNTDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "Computer"
+              },
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              },
+              {
+                "identifier": "DnsDomain",
+                "columnName": "HostNameDomain"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/0b200f33-a54e-5c8c-ae8c-5152e805b6e8')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0b200f33-a54e-5c8c-ae8c-5152e805b6e8')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "NRT",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] NRT Privileged Role Assigned Outside PIM",
+        "description": "Identifies a privileged role being assigned to a user outside of PIM\nRef : https://docs.microsoft.com/azure/active-directory/fundamentals/security-operations-privileged-accounts#things-to-monitor-1",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "AuditLogs\n| where Category =~ \"RoleManagement\"\n| where OperationName has \"Add member to role outside of PIM\"\n        or (LoggedByService =~ \"Core Directory\" and OperationName =~ \"Add member to role\" and Identity != \"MS-PIM\" and Identity != \"MS-PIM-Fairfax\")\n| mv-apply TargetResource = TargetResources on \n  (\n      where TargetResource.type =~ \"User\"\n      | extend TargetUserPrincipalName = tostring(TargetResource.userPrincipalName)\n  )\n| extend InitiatingAppName = tostring(InitiatedBy.app.displayName)\n| extend InitiatingAppServicePrincipalId = tostring(InitiatedBy.app.servicePrincipalId)\n| extend InitiatingUserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)\n| extend InitiatingAadUserId = tostring(InitiatedBy.user.id)\n| extend InitiatingIpAddress = tostring(iff(isnotempty(InitiatedBy.user.ipAddress), InitiatedBy.user.ipAddress, InitiatedBy.app.ipAddress))\n| extend TargetName = tostring(split(TargetUserPrincipalName,'@',0)[0]), TargetUPNSuffix = tostring(split(TargetUserPrincipalName,'@',1)[0])\n| extend InitiatedByName = tostring(split(InitiatingUserPrincipalName,'@',0)[0]), InitiatedByUPNSuffix = tostring(split(InitiatingUserPrincipalName,'@',1)[0])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "PrivilegeEscalation"
+        ],
+        "techniques": [
+          "T1078"
+        ],
+        "subTechniques": [
+          "T1078.004"
+        ],
+        "alertRuleTemplateName": "14f6da04-2f96-44ee-9210-9ccc1be6401e",
+        "templateVersion": "1.0.3",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "TargetUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "TargetName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "TargetUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "InitiatingUserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "InitiatedByName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "InitiatedByUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAadUserId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "InitiatingAppServicePrincipalId"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "InitiatingIpAddress"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/c85332cf-8e2a-53f9-92f3-39a7082a6558')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/c85332cf-8e2a-53f9-92f3-39a7082a6558')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "[Tuning] Privileged User Logon from new ASN",
+        "description": "Detects a successful logon by a privileged account from an ASN not logged in from in the last 14 days.\n  Monitor these logons to ensure they are legitimate and identify if there are any similar sign ins.",
+        "severity": "Informational",
+        "enabled": true,
+        "query": "let admins=(IdentityInfo\n  | where AssignedRoles contains \"admin\" or GroupMembership has \"Admin\"\n  | summarize by tolower(AccountUPN));\n  let known_asns = (\n  SigninLogs\n  | where TimeGenerated between(ago(14d)..ago(1d))\n  | where ResultType == 0\n  | summarize by AutonomousSystemNumber);\n  SigninLogs\n  | where TimeGenerated > ago(1d)\n  | where ResultType == 0\n  | where tolower(UserPrincipalName) in (admins)\n  | where AutonomousSystemNumber !in (known_asns)\n  | project-reorder TimeGenerated, UserPrincipalName, UserAgent, IPAddress, AutonomousSystemNumber\n  | extend AccountName = tostring(split(UserPrincipalName, \"@\")[0]), AccountUPNSuffix = tostring(split(UserPrincipalName, \"@\")[1])\n",
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [
+          "T1078"
+        ],
+        "subTechniques": [
+          "T1078.004"
+        ],
+        "alertRuleTemplateName": "55073036-bb86-47d3-a85a-b113ac3d9396",
+        "templateVersion": "1.0.6",
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "SingleAlert"
+        },
+        "queryFrequency": "P1D",
+        "queryPeriod": "P7D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "UserPrincipalName"
+              },
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "UPNSuffix",
+                "columnName": "AccountUPNSuffix"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "IPAddress"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
