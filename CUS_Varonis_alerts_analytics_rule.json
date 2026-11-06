@@ -1,0 +1,91 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspace')), '/providers/Microsoft.SecurityInsights/alertRules/7c1e4b52-3f0a-4d6e-9a18-5b2c6e8f1d47')]",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/7c1e4b52-3f0a-4d6e-9a18-5b2c6e8f1d47')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2025-06-01",
+      "properties": {
+        "displayName": "CUS: Varonis alerts",
+        "description": "Identifies alerts raised by Varonis threat detection policies and creates a Microsoft Sentinel alert for each one, with severity and MITRE ATT&CK tactic taken from the Varonis alert.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "VaronisAlertsV2_CL\n| summarize arg_max(TimeGenerated, *) by AlertId_g\n| extend MappedSeverity = case(\n    AlertSeverity_s in~ (\"Critical\", \"High\"), \"High\",\n    AlertSeverity_s =~ \"Medium\", \"Medium\",\n    AlertSeverity_s =~ \"Low\", \"Low\",\n    AlertSeverity_s =~ \"Informational\", \"Informational\",\n    \"Medium\")\n| extend MitreTactic = replace_string(replace_string(MitreTacticName_s, \" and \", \" And \"), \" \", \"\")\n| extend AccountName = trim(@\"\\s+\", extract(@\"^[^,;]+\", 0, UserSamAccountNames_s))\n| extend HostName = trim(@\"\\s+\", extract(@\"^[^,;]+\", 0, DeviceNames_s))\n| project\n    TimeGenerated,\n    AlertId_g,\n    ThreatDetectionPolicyName_s,\n    MappedSeverity,\n    AlertSeverity_s,\n    MitreTactic,\n    AlertCategory_s,\n    Status_s,\n    AccountName,\n    HostName,\n    UserSamAccountNames_s,\n    DeviceNames_s,\n    Assets_s,\n    EventsCount_d,\n    PrivilegedAccountType_s,\n    SensitiveDataExposed_s,\n    FlaggedDataExposed_s,\n    ContainsMaliciousExternalIPs_b,\n    AbnormalLocations_s,\n    InitialEventTimeUTC_t",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [],
+        "techniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Varonis alert: {{ThreatDetectionPolicyName_s}}",
+          "alertDescriptionFormat": "Varonis threat detection policy {{ThreatDetectionPolicyName_s}} raised this alert with a Varonis severity of {{AlertSeverity_s}} in the category {{AlertCategory_s}}. Review the custom details for the accounts, devices, assets and data involved, then investigate the alert in Varonis.",
+          "alertSeverityColumnName": "MappedSeverity",
+          "alertTacticsColumnName": "MitreTactic"
+        },
+        "customDetails": {
+          "VaronisAlertId": "AlertId_g",
+          "VaronisSeverity": "AlertSeverity_s",
+          "VaronisCategory": "AlertCategory_s",
+          "VaronisStatus": "Status_s",
+          "Accounts": "UserSamAccountNames_s",
+          "Devices": "DeviceNames_s",
+          "Assets": "Assets_s",
+          "EventCount": "EventsCount_d",
+          "PrivilegedAccount": "PrivilegedAccountType_s",
+          "SensitiveData": "SensitiveDataExposed_s",
+          "FlaggedData": "FlaggedDataExposed_s",
+          "MaliciousExternalIP": "ContainsMaliciousExternalIPs_b",
+          "AbnormalLocations": "AbnormalLocations_s",
+          "InitialEventTime": "InitialEventTimeUTC_t"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "HostName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
