@@ -1,0 +1,258 @@
+id: 0d074295-794a-425e-bf75-ea97a5e812cd
+name: T1135 - Network Share Discovery
+description: |
+  Detects network share discovery in two ways.
+  1) Share-listing commands (net view, net share, Get-SmbShare, PowerView and similar) run with a risk
+  indicator: non-admin account, unusual parent process, admin or hidden shares, several targets, or
+  attack-tool strings.
+  2) A process with no legitimate need for SMB (e.g. dllhost.exe not started by svchost, rundll32)
+  connecting to internal hosts over SMB; High if it also queried AD over LDAP.
+  Built from purple team findings. Exclusions for sanctioned remoting accounts are read from the
+  DetectionExclusions watchlist.
+# Informational while tuning. At go-live set to Medium and uncomment alertSeverityColumnName below.
+severity: Informational
+status: Available
+requiredDataConnectors:
+  - connectorId: MicrosoftThreatProtection
+    dataTypes:
+      - DeviceProcessEvents
+      - DeviceEvents
+      - DeviceNetworkEvents
+queryFrequency: 1h
+queryPeriod: 2h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Discovery
+relevantTechniques:
+  - T1135
+query: |
+  // T1135 Network Share Discovery - two checks (DetectionBranch says which fired):
+  //   1) Share enumeration command - net view/net share/Get-SmbShare etc. with a risk reason
+  //      (non-admin, odd parent, admin shares, several targets, attack tool)
+  //   2) Unexpected discovery process - a process that shouldn't use SMB does (e.g. dllhost.exe from MSBuild);
+  //      High if it also queried AD over LDAP
+  // Runs hourly; window ends 10 minutes ago to allow for Defender ingestion delay.
+  let startTime = ago(70m);
+  let endTime   = ago(10m);
+  // Testing: uncomment, set dates (UTC), comment out the two lines above
+  // let startTime = datetime(2026-10-01 14:00:00);
+  // let endTime   = datetime(2026-10-01 17:00:00);
+  let smbPorts        = dynamic([445, 139]);
+  let serviceAccounts = dynamic(["system", "local service", "network service",
+      "localsystem", "localservice", "networkservice"]);
+  // ---------------- Check 1 settings ----------------
+  // Assumption: admin naming convention - replace with a privileged-accounts watchlist
+  let adminAccountRegex = @'(?i)^(adm|admin)[-_.]|[-_.](adm|admin)$';
+  let minCommandTargets = 3;          // remote hosts named in commands by one account
+  // net view \\host, net view /all, net share (listing only)
+  let netShareEnumRegex = @'(?i)net1?(\.exe)?"?\s+(view\s+\\\\|view\b.*\s/all\b|share\b)';
+  let shareEnumStrings = dynamic(["Get-SmbShare", "Win32_Share", "Find-DomainShare", "Invoke-ShareFinder",
+      "Get-NetShare", "Find-InterestingDomainShareFile"]);
+  let offensiveStrings = dynamic(["Find-DomainShare", "Invoke-ShareFinder", "Get-NetShare",
+      "Find-InterestingDomainShareFile", "sharpshares", "snaffler", "sharefinder", "netshareenum"]);
+  // SCCM, SCOM, Qualys, MDE live response
+  let excludedParents = dynamic(["ccmexec.exe", "monitoringhost.exe", "qualysagent.exe", "senseir.exe"]);
+  // Sanctioned PowerShell remoting accounts, from the DetectionExclusions watchlist
+  let remotingServiceAccounts =
+      _GetWatchlist('DetectionExclusions')
+      | where Rule == "T1135" and ExceptionType == "RemotingAccount"
+      | project AccountName = tolower(tostring(SearchKey));
+  let riskyParents = dynamic(["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "onenote.exe",
+      "msaccess.exe", "mspub.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe",
+      "regsvr32.exe", "msbuild.exe", "installutil.exe", "wmiprvse.exe"]);
+  let userWritable = @'(?i)^[a-z]:\\(users|programdata|windows\\temp|perflogs)\\';
+  // ---------------- Check 2 settings ----------------
+  let ldapPorts = dynamic([389, 636, 3268, 3269, 9389]);   // LDAP, LDAPS, GC, AD Web Services
+  // No legitimate reason to use SMB. Script hosts left out (logon scripts); msbuild.exe has its own rules.
+  let unexpectedNetProcs = dynamic(["rundll32.exe", "regsvr32.exe", "mshta.exe", "installutil.exe",
+      "regasm.exe", "regsvcs.exe", "werfault.exe", "notepad.exe", "searchprotocolhost.exe"]);
+  // Printer job monitors in the admin-only driver store (not the user-writable spool\drivers\color)
+  let printDriverRegex = @'(?i)\\spool\\drivers\\(x64|w32x86)\\3\\[^\\",]+\.dll"?,';
+  let kernelProcesses      = dynamic(["system", "ntoskrnl.exe", ""]);
+  let kernelFollowOnWindow = 10m;
+  // =====================================================================
+  // Check 1: share enumeration commands
+  // =====================================================================
+  let enumProcs =
+      DeviceProcessEvents
+      | where TimeGenerated between (startTime .. endTime)
+      | where ActionType == "ProcessCreated"
+      | extend Proc = tolower(FileName), Parent = tolower(InitiatingProcessFileName)
+      | where not(Proc == "net1.exe" and Parent == "net.exe")    // duplicate of the net.exe event
+      | where (Proc in ("net.exe", "net1.exe")
+                  and ProcessCommandLine matches regex netShareEnumRegex
+                  and ProcessCommandLine !contains "="            // creating a share
+                  and ProcessCommandLine !contains "/delete")
+           or (Proc == "wmic.exe" and ProcessCommandLine matches regex @'(?i)\bshare\b')
+           or ProcessCommandLine has_any (shareEnumStrings)
+           or ProcessCommandLine has_any (offensiveStrings)
+      | project TimeGenerated, DeviceId, DeviceName, AccountDomain, AccountName,
+                Command = ProcessCommandLine, Proc, Parent, ParentPath = InitiatingProcessFolderPath;
+  // PowerShell cmdlets logged by MDE, including those inside scripts
+  let enumPs =
+      DeviceEvents
+      | where TimeGenerated between (startTime .. endTime)
+      | where ActionType == "PowerShellCommand"
+      | extend PsCommand = tostring(parse_json(AdditionalFields).Command)
+      | where PsCommand has_any (shareEnumStrings)
+      | project TimeGenerated, DeviceId, DeviceName,
+                AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName,
+                Command = strcat(PsCommand, " :: ", InitiatingProcessCommandLine),
+                Proc = tolower(InitiatingProcessFileName), Parent = tolower(InitiatingProcessParentFileName),
+                ParentPath = "";
+  let shareEnum =
+      union enumProcs, enumPs
+      | where Parent !in (excludedParents)
+      // MDE's own data collection scripts
+      | where not(Command contains @"Windows Defender Advanced Threat Protection\DataCollection"
+                  or ParentPath contains @"Windows Defender Advanced Threat Protection\DataCollection")
+      // watchlisted remoting accounts, unless attack-tool strings appear
+      | where not(AccountName in~ (remotingServiceAccounts)
+                  and (Proc == "wsmprovhost.exe" or Parent == "wsmprovhost.exe")
+                  and not(Command has_any (offensiveStrings)))
+      | extend TargetHosts   = extract_all(@'\\\\([A-Za-z0-9._-]+)', Command),
+               IsAdmin       = AccountName matches regex adminAccountRegex,
+               // blank (unknown) and machine ($) accounts don't count as non-admin
+               IsService     = AccountName in~ (serviceAccounts) or isempty(AccountName) or AccountName endswith "$",
+               RiskyParent   = Parent in (riskyParents) or ParentPath matches regex userWritable,
+               HiddenShares  = Command matches regex @'(?i)\s/all\b|\b(admin|ipc|[a-z])\$' or Command has "-Special",
+               OffensiveTool = Command has_any (offensiveStrings)
+      | summarize StartTime       = min(TimeGenerated),
+                  EndTime         = max(TimeGenerated),
+                  Executions      = count(),
+                  SampleTargets   = make_set(TargetHosts, 50),
+                  SampleCommands  = make_set(Command, 10),
+                  Processes       = make_set(Proc, 10),
+                  ParentProcesses = make_set(Parent, 10),
+                  IsAdmin         = max(toint(IsAdmin)),
+                  IsService       = max(toint(IsService)),
+                  RiskyParent     = max(toint(RiskyParent)),
+                  HiddenShares    = max(toint(HiddenShares)),
+                  OffensiveTool   = max(toint(OffensiveTool))
+          by DeviceId, DeviceName, AccountDomain, AccountName
+      | extend DistinctTargets = array_length(SampleTargets)
+      | extend Reasons = array_concat(
+              iff(IsAdmin == 0 and IsService == 0, pack_array("Non-admin account"), dynamic([])),
+              iff(RiskyParent == 1, pack_array("Unexpected parent process"), dynamic([])),
+              iff(HiddenShares == 1, pack_array("Hidden/admin share enumeration"), dynamic([])),
+              iff(OffensiveTool == 1, pack_array("Offensive tooling string"), dynamic([])),
+              iff(DistinctTargets >= minCommandTargets, pack_array(strcat("Enumerated ", DistinctTargets, " remote hosts")), dynamic([])))
+      | where array_length(Reasons) > 0       // no risk reason, no alert
+      | extend Severity = case(RiskyParent == 1 or OffensiveTool == 1, "High",
+                               IsAdmin == 0 or DistinctTargets >= minCommandTargets, "Medium",
+                               "Low"),
+               DetectionBranch = "Share enumeration command";
+  // =====================================================================
+  // Check 2: SMB from processes that shouldn't use it
+  // =====================================================================
+  let suspiciousDiscovery = materialize(
+      DeviceNetworkEvents
+      | where TimeGenerated between (startTime .. endTime)
+      | where RemotePort in (smbPorts) or RemotePort in (ldapPorts)
+      | where RemoteIPType == "Private"
+      | where ActionType in ("ConnectionSuccess", "ConnectionAttempt", "ConnectionFailed")
+      | extend Proc = tolower(InitiatingProcessFileName), ParentProc = tolower(InitiatingProcessParentFileName)
+      // real COM surrogates are started by svchost
+      | where Proc in (unexpectedNetProcs) or (Proc == "dllhost.exe" and ParentProc != "svchost.exe")
+      | where not(Proc == "rundll32.exe" and InitiatingProcessCommandLine matches regex printDriverRegex)
+      // certificate import from Explorer (chain check over LDAP)
+      | where not(Proc == "rundll32.exe" and ParentProc == "explorer.exe"
+                  and InitiatingProcessCommandLine contains "cryptext.dll,CryptExt")
+      | summarize StartTime         = min(TimeGenerated),
+                  EndTime           = max(TimeGenerated),
+                  DistinctTargets   = dcount(RemoteIP),
+                  SuccessfulTargets = dcountif(RemoteIP, ActionType == "ConnectionSuccess"),
+                  LdapTargets       = dcountif(RemoteIP, RemotePort in (ldapPorts)),
+                  SmbTargets        = dcountif(RemoteIP, RemotePort in (smbPorts)),
+                  SampleTargets     = make_set(RemoteIP, 25),
+                  SampleCommands    = make_set(InitiatingProcessCommandLine, 5)
+          by DeviceId, DeviceName, Proc, ParentProc, Pid = InitiatingProcessId,
+             AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName
+      | where SmbTargets > 0);                // LDAP alone is not share discovery
+  // Rest of the sweep is usually credited to the kernel SMB client - count it
+  let kernelFollowOn =
+      suspiciousDiscovery
+      | project DeviceId, Pid, StartTime, EndTime
+      | join kind=inner (
+          DeviceNetworkEvents
+          | where TimeGenerated between (startTime .. (endTime + kernelFollowOnWindow))
+          | where RemotePort in (smbPorts) and RemoteIPType == "Private"
+          | where tolower(InitiatingProcessFileName) in (kernelProcesses)
+          | project DeviceId, KTime = TimeGenerated, RemoteIP
+        ) on DeviceId
+      | where KTime between (StartTime .. (EndTime + kernelFollowOnWindow))
+      | summarize KernelSmbTargets = dcount(RemoteIP) by DeviceId, Pid, StartTime;
+  let discoveryProc =
+      suspiciousDiscovery
+      | join kind=leftouter kernelFollowOn on DeviceId, Pid, StartTime
+      | project-away DeviceId1, Pid1, StartTime1
+      | extend KernelSmbTargets = coalesce(KernelSmbTargets, 0)
+      | extend Reasons = array_concat(
+              pack_array(strcat(Proc, " (parent ", ParentProc, ") connected to ", LdapTargets,
+                                " LDAP and ", SmbTargets, " SMB internal hosts")),
+              iff(LdapTargets > 0 and SmbTargets > 0,
+                  pack_array("LDAP then SMB from one process (directory lookup then share listing)"), dynamic([])),
+              iff(KernelSmbTargets > 0,
+                  pack_array(strcat("Kernel SMB to ", KernelSmbTargets, " hosts within ",
+                                    toint(kernelFollowOnWindow / 1m), " min")), dynamic([])))
+      | extend Severity = iff((LdapTargets > 0 and SmbTargets > 0) or KernelSmbTargets >= 3, "High", "Medium"),
+               Processes = pack_array(Proc),
+               ParentProcesses = pack_array(ParentProc),
+               DetectionBranch = "Unexpected discovery process";
+  // =====================================================================
+  // Output
+  // =====================================================================
+  union shareEnum, discoveryProc
+  | extend ReasonsText   = strcat_array(Reasons, "; "),
+           SampleCommand = tostring(SampleCommands[0])
+  | project StartTime, EndTime, DeviceName, DeviceId, AccountDomain, AccountName,
+            DetectionBranch, Severity, ReasonsText, DistinctTargets, SampleTargets,
+            Processes, ParentProcesses, SampleCommand, SampleCommands, Executions
+  | order by StartTime desc
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: FullName
+        columnName: DeviceName
+  - entityType: Account
+    fieldMappings:
+      - identifier: Name
+        columnName: AccountName
+      - identifier: NTDomain
+        columnName: AccountDomain
+  - entityType: Process
+    fieldMappings:
+      - identifier: CommandLine
+        columnName: SampleCommand
+customDetails:
+  DetectionType: DetectionBranch
+  Reasons: ReasonsText
+  TargetCount: DistinctTargets
+  Targets: SampleTargets
+  Process: Processes
+  ParentProcess: ParentProcesses
+  Commands: SampleCommands
+  Executions: Executions
+alertDetailsOverride:
+  alertDisplayNameFormat: Network share discovery on {{DeviceName}} ({{DetectionBranch}})
+  alertDescriptionFormat: '{{ReasonsText}}. Account: {{AccountName}}. Check the parent process and what ran before it, then whether any listed shares were accessed.'
+  # Uncomment at go-live so each alert uses the severity worked out by the query (High/Medium/Low)
+  # alertSeverityColumnName: Severity
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+incidentConfiguration:
+  createIncident: true
+  groupingConfiguration:
+    enabled: true
+    reopenClosedIncident: false
+    lookbackDuration: 4h
+    matchingMethod: Selected
+    groupByEntities:
+      - Host
+    groupByAlertDetails: []
+    groupByCustomDetails: []
+suppressionEnabled: false
+suppressionDuration: 5h
+version: 1.0.0
+kind: Scheduled
