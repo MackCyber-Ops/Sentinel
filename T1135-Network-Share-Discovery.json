@@ -1,0 +1,107 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/0d074295-794a-425e-bf75-ea97a5e812cd')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0d074295-794a-425e-bf75-ea97a5e812cd')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "T1135 - Network Share Discovery",
+        "description": "Detects network share discovery in two ways.\n1) Share-listing commands (net view, net share, Get-SmbShare, PowerView and similar) run with a risk\nindicator: non-admin account, unusual parent process, admin or hidden shares, several targets, or\nattack-tool strings.\n2) A process with no legitimate need for SMB (e.g. dllhost.exe not started by svchost, rundll32)\nconnecting to internal hosts over SMB; High if it also queried AD over LDAP.\nBuilt from purple team findings. Exclusions for sanctioned remoting accounts are read from the\nDetectionExclusions watchlist.",
+        "severity": "Informational",
+        "enabled": false,
+        "query": "// T1135 Network Share Discovery - two checks (DetectionBranch says which fired):\n//   1) Share enumeration command - net view/net share/Get-SmbShare etc. with a risk reason\n//      (non-admin, odd parent, admin shares, several targets, attack tool)\n//   2) Unexpected discovery process - a process that shouldn't use SMB does (e.g. dllhost.exe from MSBuild);\n//      High if it also queried AD over LDAP\n// Runs hourly; window ends 10 minutes ago to allow for Defender ingestion delay.\nlet startTime = ago(70m);\nlet endTime   = ago(10m);\n// Testing: uncomment, set dates (UTC), comment out the two lines above\n// let startTime = datetime(2026-10-01 14:00:00);\n// let endTime   = datetime(2026-10-01 17:00:00);\nlet smbPorts        = dynamic([445, 139]);\nlet serviceAccounts = dynamic([\"system\", \"local service\", \"network service\",\n    \"localsystem\", \"localservice\", \"networkservice\"]);\n// ---------------- Check 1 settings ----------------\n// Assumption: admin naming convention - replace with a privileged-accounts watchlist\nlet adminAccountRegex = @'(?i)^(adm|admin)[-_.]|[-_.](adm|admin)$';\nlet minCommandTargets = 3;          // remote hosts named in commands by one account\n// net view \\\\host, net view /all, net share (listing only)\nlet netShareEnumRegex = @'(?i)net1?(\\.exe)?\"?\\s+(view\\s+\\\\\\\\|view\\b.*\\s/all\\b|share\\b)';\nlet shareEnumStrings = dynamic([\"Get-SmbShare\", \"Win32_Share\", \"Find-DomainShare\", \"Invoke-ShareFinder\",\n    \"Get-NetShare\", \"Find-InterestingDomainShareFile\"]);\nlet offensiveStrings = dynamic([\"Find-DomainShare\", \"Invoke-ShareFinder\", \"Get-NetShare\",\n    \"Find-InterestingDomainShareFile\", \"sharpshares\", \"snaffler\", \"sharefinder\", \"netshareenum\"]);\n// SCCM, SCOM, Qualys, MDE live response\nlet excludedParents = dynamic([\"ccmexec.exe\", \"monitoringhost.exe\", \"qualysagent.exe\", \"senseir.exe\"]);\n// Sanctioned PowerShell remoting accounts, from the DetectionExclusions watchlist\nlet remotingServiceAccounts =\n    _GetWatchlist('DetectionExclusions')\n    | where Rule == \"T1135\" and ExceptionType == \"RemotingAccount\"\n    | project AccountName = tolower(tostring(SearchKey));\nlet riskyParents = dynamic([\"winword.exe\", \"excel.exe\", \"powerpnt.exe\", \"outlook.exe\", \"onenote.exe\",\n    \"msaccess.exe\", \"mspub.exe\", \"wscript.exe\", \"cscript.exe\", \"mshta.exe\", \"rundll32.exe\",\n    \"regsvr32.exe\", \"msbuild.exe\", \"installutil.exe\", \"wmiprvse.exe\"]);\nlet userWritable = @'(?i)^[a-z]:\\\\(users|programdata|windows\\\\temp|perflogs)\\\\';\n// ---------------- Check 2 settings ----------------\nlet ldapPorts = dynamic([389, 636, 3268, 3269, 9389]);   // LDAP, LDAPS, GC, AD Web Services\n// No legitimate reason to use SMB. Script hosts left out (logon scripts); msbuild.exe has its own rules.\nlet unexpectedNetProcs = dynamic([\"rundll32.exe\", \"regsvr32.exe\", \"mshta.exe\", \"installutil.exe\",\n    \"regasm.exe\", \"regsvcs.exe\", \"werfault.exe\", \"notepad.exe\", \"searchprotocolhost.exe\"]);\n// Printer job monitors in the admin-only driver store (not the user-writable spool\\drivers\\color)\nlet printDriverRegex = @'(?i)\\\\spool\\\\drivers\\\\(x64|w32x86)\\\\3\\\\[^\\\\\",]+\\.dll\"?,';\nlet kernelProcesses      = dynamic([\"system\", \"ntoskrnl.exe\", \"\"]);\nlet kernelFollowOnWindow = 10m;\n// =====================================================================\n// Check 1: share enumeration commands\n// =====================================================================\nlet enumProcs =\n    DeviceProcessEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType == \"ProcessCreated\"\n    | extend Proc = tolower(FileName), Parent = tolower(InitiatingProcessFileName)\n    | where not(Proc == \"net1.exe\" and Parent == \"net.exe\")    // duplicate of the net.exe event\n    | where (Proc in (\"net.exe\", \"net1.exe\")\n                and ProcessCommandLine matches regex netShareEnumRegex\n                and ProcessCommandLine !contains \"=\"            // creating a share\n                and ProcessCommandLine !contains \"/delete\")\n         or (Proc == \"wmic.exe\" and ProcessCommandLine matches regex @'(?i)\\bshare\\b')\n         or ProcessCommandLine has_any (shareEnumStrings)\n         or ProcessCommandLine has_any (offensiveStrings)\n    | project TimeGenerated, DeviceId, DeviceName, AccountDomain, AccountName,\n              Command = ProcessCommandLine, Proc, Parent, ParentPath = InitiatingProcessFolderPath;\n// PowerShell cmdlets logged by MDE, including those inside scripts\nlet enumPs =\n    DeviceEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType == \"PowerShellCommand\"\n    | extend PsCommand = tostring(parse_json(AdditionalFields).Command)\n    | where PsCommand has_any (shareEnumStrings)\n    | project TimeGenerated, DeviceId, DeviceName,\n              AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName,\n              Command = strcat(PsCommand, \" :: \", InitiatingProcessCommandLine),\n              Proc = tolower(InitiatingProcessFileName), Parent = tolower(InitiatingProcessParentFileName),\n              ParentPath = \"\";\nlet shareEnum =\n    union enumProcs, enumPs\n    | where Parent !in (excludedParents)\n    // MDE's own data collection scripts\n    | where not(Command contains @\"Windows Defender Advanced Threat Protection\\DataCollection\"\n                or ParentPath contains @\"Windows Defender Advanced Threat Protection\\DataCollection\")\n    // watchlisted remoting accounts, unless attack-tool strings appear\n    | where not(AccountName in~ (remotingServiceAccounts)\n                and (Proc == \"wsmprovhost.exe\" or Parent == \"wsmprovhost.exe\")\n                and not(Command has_any (offensiveStrings)))\n    | extend TargetHosts   = extract_all(@'\\\\\\\\([A-Za-z0-9._-]+)', Command),\n             IsAdmin       = AccountName matches regex adminAccountRegex,\n             // blank (unknown) and machine ($) accounts don't count as non-admin\n             IsService     = AccountName in~ (serviceAccounts) or isempty(AccountName) or AccountName endswith \"$\",\n             RiskyParent   = Parent in (riskyParents) or ParentPath matches regex userWritable,\n             HiddenShares  = Command matches regex @'(?i)\\s/all\\b|\\b(admin|ipc|[a-z])\\$' or Command has \"-Special\",\n             OffensiveTool = Command has_any (offensiveStrings)\n    | summarize StartTime       = min(TimeGenerated),\n                EndTime         = max(TimeGenerated),\n                Executions      = count(),\n                SampleTargets   = make_set(TargetHosts, 50),\n                SampleCommands  = make_set(Command, 10),\n                Processes       = make_set(Proc, 10),\n                ParentProcesses = make_set(Parent, 10),\n                IsAdmin         = max(toint(IsAdmin)),\n                IsService       = max(toint(IsService)),\n                RiskyParent     = max(toint(RiskyParent)),\n                HiddenShares    = max(toint(HiddenShares)),\n                OffensiveTool   = max(toint(OffensiveTool))\n        by DeviceId, DeviceName, AccountDomain, AccountName\n    | extend DistinctTargets = array_length(SampleTargets)\n    | extend Reasons = array_concat(\n            iff(IsAdmin == 0 and IsService == 0, pack_array(\"Non-admin account\"), dynamic([])),\n            iff(RiskyParent == 1, pack_array(\"Unexpected parent process\"), dynamic([])),\n            iff(HiddenShares == 1, pack_array(\"Hidden/admin share enumeration\"), dynamic([])),\n            iff(OffensiveTool == 1, pack_array(\"Offensive tooling string\"), dynamic([])),\n            iff(DistinctTargets >= minCommandTargets, pack_array(strcat(\"Enumerated \", DistinctTargets, \" remote hosts\")), dynamic([])))\n    | where array_length(Reasons) > 0       // no risk reason, no alert\n    | extend Severity = case(RiskyParent == 1 or OffensiveTool == 1, \"High\",\n                             IsAdmin == 0 or DistinctTargets >= minCommandTargets, \"Medium\",\n                             \"Low\"),\n             DetectionBranch = \"Share enumeration command\";\n// =====================================================================\n// Check 2: SMB from processes that shouldn't use it\n// =====================================================================\nlet suspiciousDiscovery = materialize(\n    DeviceNetworkEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where RemotePort in (smbPorts) or RemotePort in (ldapPorts)\n    | where RemoteIPType == \"Private\"\n    | where ActionType in (\"ConnectionSuccess\", \"ConnectionAttempt\", \"ConnectionFailed\")\n    | extend Proc = tolower(InitiatingProcessFileName), ParentProc = tolower(InitiatingProcessParentFileName)\n    // real COM surrogates are started by svchost\n    | where Proc in (unexpectedNetProcs) or (Proc == \"dllhost.exe\" and ParentProc != \"svchost.exe\")\n    | where not(Proc == \"rundll32.exe\" and InitiatingProcessCommandLine matches regex printDriverRegex)\n    // certificate import from Explorer (chain check over LDAP)\n    | where not(Proc == \"rundll32.exe\" and ParentProc == \"explorer.exe\"\n                and InitiatingProcessCommandLine contains \"cryptext.dll,CryptExt\")\n    | summarize StartTime         = min(TimeGenerated),\n                EndTime           = max(TimeGenerated),\n                DistinctTargets   = dcount(RemoteIP),\n                SuccessfulTargets = dcountif(RemoteIP, ActionType == \"ConnectionSuccess\"),\n                LdapTargets       = dcountif(RemoteIP, RemotePort in (ldapPorts)),\n                SmbTargets        = dcountif(RemoteIP, RemotePort in (smbPorts)),\n                SampleTargets     = make_set(RemoteIP, 25),\n                SampleCommands    = make_set(InitiatingProcessCommandLine, 5)\n        by DeviceId, DeviceName, Proc, ParentProc, Pid = InitiatingProcessId,\n           AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName\n    | where SmbTargets > 0);                // LDAP alone is not share discovery\n// Rest of the sweep is usually credited to the kernel SMB client - count it\nlet kernelFollowOn =\n    suspiciousDiscovery\n    | project DeviceId, Pid, StartTime, EndTime\n    | join kind=inner (\n        DeviceNetworkEvents\n        | where TimeGenerated between (startTime .. (endTime + kernelFollowOnWindow))\n        | where RemotePort in (smbPorts) and RemoteIPType == \"Private\"\n        | where tolower(InitiatingProcessFileName) in (kernelProcesses)\n        | project DeviceId, KTime = TimeGenerated, RemoteIP\n      ) on DeviceId\n    | where KTime between (StartTime .. (EndTime + kernelFollowOnWindow))\n    | summarize KernelSmbTargets = dcount(RemoteIP) by DeviceId, Pid, StartTime;\nlet discoveryProc =\n    suspiciousDiscovery\n    | join kind=leftouter kernelFollowOn on DeviceId, Pid, StartTime\n    | project-away DeviceId1, Pid1, StartTime1\n    | extend KernelSmbTargets = coalesce(KernelSmbTargets, 0)\n    | extend Reasons = array_concat(\n            pack_array(strcat(Proc, \" (parent \", ParentProc, \") connected to \", LdapTargets,\n                              \" LDAP and \", SmbTargets, \" SMB internal hosts\")),\n            iff(LdapTargets > 0 and SmbTargets > 0,\n                pack_array(\"LDAP then SMB from one process (directory lookup then share listing)\"), dynamic([])),\n            iff(KernelSmbTargets > 0,\n                pack_array(strcat(\"Kernel SMB to \", KernelSmbTargets, \" hosts within \",\n                                  toint(kernelFollowOnWindow / 1m), \" min\")), dynamic([])))\n    | extend Severity = iff((LdapTargets > 0 and SmbTargets > 0) or KernelSmbTargets >= 3, \"High\", \"Medium\"),\n             Processes = pack_array(Proc),\n             ParentProcesses = pack_array(ParentProc),\n             DetectionBranch = \"Unexpected discovery process\";\n// =====================================================================\n// Output\n// =====================================================================\nunion shareEnum, discoveryProc\n| extend ReasonsText   = strcat_array(Reasons, \"; \"),\n         SampleCommand = tostring(SampleCommands[0])\n| project StartTime, EndTime, DeviceName, DeviceId, AccountDomain, AccountName,\n          DetectionBranch, Severity, ReasonsText, DistinctTargets, SampleTargets,\n          Processes, ParentProcesses, SampleCommand, SampleCommands, Executions\n| order by StartTime desc",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT2H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "startTimeUtc": null,
+        "tactics": [
+          "Discovery"
+        ],
+        "techniques": [
+          "T1135"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "templateVersion": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT4H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [
+              "Host"
+            ],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Network share discovery on {{DeviceName}} ({{DetectionBranch}})",
+          "alertDescriptionFormat": "{{ReasonsText}}. Account: {{AccountName}}. Check the parent process and what ran before it, then whether any listed shares were accessed.",
+          "alertDynamicProperties": []
+        },
+        "customDetails": {
+          "DetectionType": "DetectionBranch",
+          "Reasons": "ReasonsText",
+          "TargetCount": "DistinctTargets",
+          "Targets": "SampleTargets",
+          "Process": "Processes",
+          "ParentProcess": "ParentProcesses",
+          "Commands": "SampleCommands",
+          "Executions": "Executions"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "SampleCommand"
+              }
+            ]
+          }
+        ],
+        "sentinelEntitiesMappings": null
+      }
+    }
+  ]
+}
