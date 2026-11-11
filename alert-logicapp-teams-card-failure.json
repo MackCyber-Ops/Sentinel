@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Send Incident Teams Card (XDR) Logic App."
+      }
+    },
+    "logicAppResourceGroup": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().name]",
+      "metadata": {
+        "description": "Resource group containing the Logic App. Defaults to the deployment resource group."
+      }
+    },
+    "actionGroupName": {
+      "type": "string",
+      "defaultValue": "ag-secops-critical",
+      "metadata": {
+        "description": "Name of the existing SecOps action group."
+      }
+    },
+    "actionGroupResourceGroup": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().name]",
+      "metadata": {
+        "description": "Resource group containing the action group. Defaults to the deployment resource group."
+      }
+    },
+    "alertRuleName": {
+      "type": "string",
+      "defaultValue": "Playbook Failure - Send Incident Teams Card XDR",
+      "metadata": {
+        "description": "Alert title shown in Azure Monitor and in notifications."
+      }
+    }
+  },
+  "variables": {
+    "logicAppId": "[resourceId(parameters('logicAppResourceGroup'), 'Microsoft.Logic/workflows', parameters('logicAppName'))]",
+    "actionGroupId": "[resourceId(parameters('actionGroupResourceGroup'), 'Microsoft.Insights/actionGroups', parameters('actionGroupName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Insights/metricAlerts",
+      "apiVersion": "2018-03-01",
+      "name": "[parameters('alertRuleName')]",
+      "location": "global",
+      "properties": {
+        "description": "The Send Incident Teams Card (XDR) playbook has failed at least once in the last 5 minutes. High-severity incidents may not have been posted to the SecOps Teams channel. Check the incident queue directly for any High incidents raised during this period, then review the Logic App run history for the error. A common cause is an expired or revoked Teams API connection - re-authorise it under the Logic App's API connections.",
+        "severity": 1,
+        "enabled": true,
+        "scopes": [
+          "[variables('logicAppId')]"
+        ],
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT5M",
+        "targetResourceType": "Microsoft.Logic/workflows",
+        "criteria": {
+          "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+          "allOf": [
+            {
+              "name": "RunsFailed",
+              "criterionType": "StaticThresholdCriterion",
+              "metricNamespace": "Microsoft.Logic/workflows",
+              "metricName": "RunsFailed",
+              "operator": "GreaterThan",
+              "threshold": 0,
+              "timeAggregation": "Total"
+            }
+          ]
+        },
+        "autoMitigate": true,
+        "actions": [
+          {
+            "actionGroupId": "[variables('actionGroupId')]"
+          }
+        ]
+      }
+    }
+  ]
+}
