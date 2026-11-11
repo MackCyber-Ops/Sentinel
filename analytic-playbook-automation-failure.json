@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String",
+      "metadata": {
+        "description": "Name of the Log Analytics workspace that Microsoft Sentinel is enabled on."
+      }
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/7c3e1a52-4b8f-4d2a-9e61-2f5b8c0d9a14')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/7c3e1a52-4b8f-4d2a-9e61-2f5b8c0d9a14')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-02-01",
+      "properties": {
+        "displayName": "Sentinel Playbook or Automation Rule Failure",
+        "description": "Detects failed runs of Sentinel playbooks (Logic Apps), including the Send Incident Teams Card (XDR) playbook used to post High severity incidents to the SecOps Teams channel, and failures of the automation rules that trigger them. A failure means High severity incidents may not have reached Teams. Check the incident queue directly for High incidents raised in the affected period, then review the Logic App run history. A common cause is an expired or revoked Teams API connection - re-authorise it under the Logic App's API connections.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "union isfuzzy=true\n(\n    AzureDiagnostics\n    | where ResourceProvider == \"MICROSOFT.LOGIC\"\n    | where OperationName == \"Microsoft.Logic/workflows/workflowRunCompleted\"\n    | where tostring(column_ifexists(\"status_s\", \"\")) == \"Failed\"\n    | extend Source = \"Playbook run failed\",\n             Name = tostring(column_ifexists(\"resource_workflowName_s\", \"\")),\n             Detail = tostring(column_ifexists(\"error_code_s\", \"\")),\n             RunId = tostring(column_ifexists(\"resource_runId_s\", \"\"))\n    | project TimeGenerated, Source, Name, Detail, RunId, ResourceId\n),\n(\n    SentinelHealth\n    | where SentinelResourceType == \"Automation rule\"\n    | where Status in (\"Failure\", \"Partial success\")\n    | project TimeGenerated,\n              Source = \"Automation rule failed\",\n              Name = SentinelResourceName,\n              Detail = Description,\n              RunId = \"\",\n              ResourceId = SentinelResourceId\n)\n| summarize FailureCount = count(),\n            FirstFailure = min(TimeGenerated),\n            LastFailure = max(TimeGenerated),\n            Detail = take_any(Detail),\n            RunId = take_any(RunId),\n            ResourceId = take_any(ResourceId)\n    by Source, Name",
+        "queryFrequency": "PT5M",
+        "queryPeriod": "PT5M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "techniques": [],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": [
+              "FailedResource"
+            ]
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "{{Source}}: {{Name}}",
+          "alertDescriptionFormat": "{{Name}} failed {{FailureCount}} time(s) in the last 5 minutes. High severity incidents may not have been posted to the SecOps Teams channel - check the incident queue directly and review the Logic App run history. Error detail: {{Detail}}"
+        },
+        "customDetails": {
+          "FailedResource": "Name",
+          "FailureSource": "Source",
+          "FailureCount": "FailureCount",
+          "RunId": "RunId",
+          "ErrorDetail": "Detail"
+        },
+        "entityMappings": [
+          {
+            "entityType": "AzureResource",
+            "fieldMappings": [
+              {
+                "identifier": "ResourceId",
+                "columnName": "ResourceId"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
