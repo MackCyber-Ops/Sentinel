@@ -1,0 +1,303 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/9df79e30-8c6a-42e2-b7d2-553d6f459ca9')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/9df79e30-8c6a-42e2-b7d2-553d6f459ca9')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "T1090.001 - Internal Proxy - Port Forward or Tunnel",
+        "description": "Detects a host being set up as an internal proxy: a netsh portproxy rule (command or registry value), ssh/plink port forwarding, or a known tunnel tool such as chisel or ligolo. Built from purple team findings. Accounts allowed to use port forwarding are read from the DetectionExclusions watchlist (ExceptionType TunnelAccount).",
+        "severity": "Informational",
+        "enabled": false,
+        "query": "// T1090.001 Internal Proxy - port forward or tunnel set up: netsh portproxy (command or registry),\n// ssh/plink port forwarding, known tunnel tools (chisel, ligolo etc.)\n// Runs hourly; window ends 10 minutes ago to allow for Defender ingestion delay.\nlet startTime = ago(70m);\nlet endTime   = ago(10m);\n// Testing: uncomment, set dates (UTC), comment out the two lines above\n// let startTime = datetime(2026-10-01 14:00:00);\n// let endTime   = datetime(2026-10-01 17:00:00);\nlet tunnelToolFiles = dynamic([\"chisel.exe\", \"frpc.exe\", \"frps.exe\", \"gost.exe\", \"socat.exe\", \"lcx.exe\",\n    \"ew.exe\", \"iox.exe\", \"npc.exe\", \"3proxy.exe\"]);\n// Distinctive tool names, matched against the executable name only (any OS). Matching the whole command\n// line caught ls of Apache's mod_proxy_wstunnel and a zsh __CHISEL_ environment marker.\nlet tunnelToolNameRegex = @'(chisel|ligolo|revsocks|rpivot|3proxy|htran|stowaway|wstunnel|earthworm|rsocx)';\n// chisel client reverse-forward syntax (R:socks, R:8080:host:80), for renamed binaries. Case-sensitive.\nlet chiselSyntaxRegex = @'\\sR:(socks|[\\d.]+:)';\n// netsh interface portproxy add/set (show and delete are ignored)\nlet portProxyRegex = @'(?i)\\bportproxy\\b.*\\b(add|set)\\b';\n// ssh/plink -R, -L or -D followed by a port. Case-sensitive: lower-case -l is the login name.\nlet sshForwardRegex = @'\\s-[A-Za-z]*[RLD]\\s*(\\[|\\*:|[\\w.-]+:)?\\d+';\n// Accounts allowed to use ssh forwarding or portproxy (e.g. developers using WSL), from the watchlist\nlet tunnelAccounts =\n    _GetWatchlist('DetectionExclusions')\n    | where Rule == \"T1090.001\" and ExceptionType == \"TunnelAccount\"\n    | project AccountName = tolower(tostring(SearchKey));\nlet tunnelProcs =\n    DeviceProcessEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType == \"ProcessCreated\"\n    | extend Proc = tolower(FileName), Parent = tolower(InitiatingProcessFileName)\n    | extend Kind = case(\n            Proc in (tunnelToolFiles) or Proc matches regex tunnelToolNameRegex\n                or ProcessCommandLine matches regex chiselSyntaxRegex,\n                \"Known tunnel or proxy tool\",\n            Proc == \"netsh.exe\" and ProcessCommandLine matches regex portProxyRegex,\n                \"netsh portproxy rule added\",\n            Proc in (\"ssh.exe\", \"plink.exe\")\n                and (ProcessCommandLine matches regex sshForwardRegex\n                     or ProcessCommandLine matches regex @'(?i)(remote|local|dynamic)forward'),\n                \"SSH port forwarding\",\n            \"\")\n    | where isnotempty(Kind)\n    | project TimeGenerated, DeviceId, DeviceName, AccountDomain, AccountName,\n              Command = ProcessCommandLine, Proc, Parent, Kind;\n// The portproxy rule itself - also catches abbreviated netsh syntax (netsh i p a v ...)\nlet portProxyReg =\n    DeviceRegistryEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType == \"RegistryValueSet\"\n    | where RegistryKey contains @\"\\Services\\PortProxy\\\"\n    | project TimeGenerated, DeviceId, DeviceName,\n              AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName,\n              Command = strcat(\"Registry: \", RegistryKey, \" | \", RegistryValueName, \" -> \", RegistryValueData),\n              Proc = tolower(InitiatingProcessFileName), Parent = tolower(InitiatingProcessParentFileName),\n              Kind = \"PortProxy registry value set\";\nlet tunnelSetup =\n    union tunnelProcs, portProxyReg\n    // watchlisted accounts, unless a known tool is involved\n    | where not(AccountName in~ (tunnelAccounts) and Kind != \"Known tunnel or proxy tool\")\n    | extend Targets = extract_all(@'(\\d{1,3}(?:\\.\\d{1,3}){3})', Command)\n    | summarize StartTime       = min(TimeGenerated),\n                EndTime         = max(TimeGenerated),\n                Executions      = count(),\n                Reasons         = make_set(Kind, 5),\n                SampleTargets   = make_set(Targets, 25),\n                SampleCommands  = make_set(Command, 10),\n                Processes       = make_set(Proc, 10),\n                ParentProcesses = make_set(Parent, 10)\n        by DeviceId, DeviceName, AccountDomain, AccountName\n    | extend DistinctTargets = array_length(SampleTargets)\n    | extend Severity = iff(array_length(Reasons) == 1 and tostring(Reasons[0]) == \"SSH port forwarding\",\n                            \"Medium\", \"High\"),\n             DetectionBranch = \"Port forward or tunnel set up\";\ntunnelSetup\n| extend ReasonsText   = strcat_array(Reasons, \"; \"),\n         SampleCommand = tostring(SampleCommands[0])\n| project StartTime, EndTime, DeviceName, DeviceId, AccountDomain, AccountName,\n          DetectionBranch, Severity, ReasonsText, DistinctTargets, SampleTargets,\n          Processes, ParentProcesses, SampleCommand, SampleCommands, Executions\n| order by StartTime desc",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT2H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "startTimeUtc": null,
+        "tactics": [
+          "CommandAndControl"
+        ],
+        "techniques": [
+          "T1090"
+        ],
+        "subTechniques": [
+          "T1090.001"
+        ],
+        "alertRuleTemplateName": null,
+        "templateVersion": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT4H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [
+              "Host"
+            ],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Internal proxy: port forward or tunnel set up on {{DeviceName}}",
+          "alertDescriptionFormat": "{{ReasonsText}}. Account: {{AccountName}}. Check what ran the command and where the forward or tunnel points, then look for other internal hosts sending traffic through this device.",
+          "alertDynamicProperties": []
+        },
+        "customDetails": {
+          "DetectionType": "DetectionBranch",
+          "Reasons": "ReasonsText",
+          "TargetCount": "DistinctTargets",
+          "Targets": "SampleTargets",
+          "Process": "Processes",
+          "ParentProcess": "ParentProcesses",
+          "Commands": "SampleCommands",
+          "Executions": "Executions"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "SampleCommand"
+              }
+            ]
+          }
+        ],
+        "sentinelEntitiesMappings": null
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/45c9e9bc-587f-46c2-b346-4beae59339ec')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/45c9e9bc-587f-46c2-b346-4beae59339ec')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "T1090.001 - Internal Proxy - Relay Process",
+        "description": "Detects one process relaying traffic: it accepts connections from internal hosts and connects onward, or holds an internet connection while reaching several internal endpoints. Limited to processes with no reason to relay traffic (rundll32, bare dllhost and similar) and rare programs in user-writable paths. Not exercised in the purple team test, so treat as unvalidated.",
+        "severity": "Informational",
+        "enabled": false,
+        "query": "// T1090.001 Internal Proxy - proxy process: one process relaying traffic. It accepts connections from\n// internal hosts and connects onward, or holds an internet connection while reaching several internal endpoints.\n// Runs hourly; query period 14 days (counts how common a process is). Window ends 10 minutes ago\n// to allow for Defender ingestion delay.\nlet startTime = ago(70m);\nlet endTime   = ago(10m);\n// Testing: uncomment, set dates (UTC), comment out the two lines above\n// let startTime = datetime(2026-10-01 14:00:00);\n// let endTime   = datetime(2026-10-01 17:00:00);\nlet baselinePeriod = 13d;          // must fit inside the 14-day query period with the 1h window\nlet userWritable = @'(?i)^[a-z]:\\\\(users|programdata|windows\\\\temp|perflogs)\\\\';\n// No legitimate reason to relay traffic or host a remote pipe. msbuild.exe has its own rules.\nlet unexpectedProcs = dynamic([\"rundll32.exe\", \"regsvr32.exe\", \"mshta.exe\", \"installutil.exe\",\n    \"regasm.exe\", \"regsvcs.exe\", \"werfault.exe\", \"notepad.exe\", \"searchprotocolhost.exe\", \"gpupdate.exe\"]);\n// dllhost.exe is only unexpected when started with no arguments (real COM surrogates always carry\n// /Processid:{...}) or by something other than DcomLaunch (svchost) or COM+ System Application (services)\nlet dllhostParents = dynamic([\"svchost.exe\", \"services.exe\"]);\n// Never legitimately run without arguments (injection targets are often started bare)\nlet noArgProcs  = dynamic([\"dllhost.exe\", \"rundll32.exe\", \"regsvr32.exe\", \"werfault.exe\", \"searchprotocolhost.exe\"]);\nlet noArgsRegex = @'(?i)^\"?[^\"]*\\.exe\"?\\s*$';\n// Assumption: if endpoints browse through an explicit proxy, list its IPs here so traffic to it\n// counts as internet-bound rather than internal\nlet explicitProxyIPs = dynamic([]);\nlet minFanOut          = 3;        // internal ip:port endpoints reached by one process alongside an internet connection\nlet maxDevicesWithProc = 5;        // a user-writable-path process only counts if this few devices run it\nlet proxyCandidates = materialize(\n    DeviceNetworkEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType in (\"InboundConnectionAccepted\", \"ConnectionSuccess\", \"ConnectionAttempt\", \"ConnectionFailed\")\n    | where RemoteIPType in (\"Private\", \"Public\")\n    | extend Proc = tolower(InitiatingProcessFileName), ParentProc = tolower(InitiatingProcessParentFileName),\n             ProcPath = tolower(InitiatingProcessFolderPath)\n    | extend NoArgs = Proc in (noArgProcs) and InitiatingProcessCommandLine matches regex noArgsRegex\n    | extend IsUnexpected     = Proc in (unexpectedProcs)\n                                or (Proc == \"dllhost.exe\" and (NoArgs or ParentProc !in (dllhostParents))),\n             UserWritablePath = ProcPath matches regex userWritable\n    | where IsUnexpected or UserWritablePath\n    | extend Inbound  = ActionType == \"InboundConnectionAccepted\",\n             External = RemoteIPType == \"Public\" or RemoteIP in (explicitProxyIPs)\n    | extend InternalIn  = Inbound and RemoteIPType == \"Private\",\n             InternalOut = not(Inbound) and not(External),\n             ExternalOut = ActionType == \"ConnectionSuccess\" and External\n    | summarize StartTime         = min(TimeGenerated),\n                EndTime           = max(TimeGenerated),\n                InboundIPs        = make_set_if(RemoteIP, InternalIn, 50),\n                ListenPorts       = make_set_if(tostring(LocalPort), InternalIn, 10),\n                InternalOutIPs    = make_set_if(RemoteIP, InternalOut, 50),\n                InternalEndpoints = dcountif(strcat(RemoteIP, \":\", tostring(RemotePort)), InternalOut),\n                ExternalTargets   = dcountif(RemoteIP, ExternalOut),\n                SampleTargets     = make_set_if(strcat(RemoteIP, \":\", tostring(RemotePort)), not(Inbound), 25),\n                SampleCommands    = make_set(InitiatingProcessCommandLine, 5)\n        by DeviceId, DeviceName, Proc, ParentProc, ProcPath, Pid = InitiatingProcessId,\n           AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName,\n           IsUnexpected, UserWritablePath, NoArgs\n    | extend InboundSources = array_length(InboundIPs),\n             // internal hosts connected to that did not themselves connect in\n             OnwardHosts    = array_length(set_difference(InternalOutIPs, InboundIPs))\n    | extend Relay = InboundSources > 0 and (ExternalTargets > 0 or OnwardHosts > 0),\n             Pivot = ExternalTargets > 0 and InternalEndpoints >= minFanOut\n    | where Relay or Pivot);\n// How many devices run each user-writable-path candidate (only checks the names found above, to keep it cheap)\nlet procPrevalence =\n    DeviceNetworkEvents\n    | where TimeGenerated between ((startTime - baselinePeriod) .. endTime)\n    | where InitiatingProcessFileName in~ ((proxyCandidates | where not(IsUnexpected) | distinct Proc))\n    | summarize DevicesWithProc = dcount(DeviceId) by Proc = tolower(InitiatingProcessFileName);\nlet proxyProc =\n    proxyCandidates\n    | join kind=leftouter procPrevalence on Proc\n    | where IsUnexpected or DevicesWithProc <= maxDevicesWithProc\n    | extend Reasons = array_concat(\n            pack_array(strcat(Proc, \" (parent \", ParentProc, \") accepted connections from \", InboundSources,\n                              \" internal host(s), reached \", InternalEndpoints, \" internal endpoint(s) and \",\n                              ExternalTargets, \" internet host(s)\")),\n            iff(Relay, pack_array(strcat(\"Relay pattern: listening on port(s) \", strcat_array(ListenPorts, \",\"),\n                                         \" with onward connections\")), dynamic([])),\n            iff(Pivot, pack_array(\"Pivot pattern: internet connection plus internal fan-out from one process\"), dynamic([])),\n            iff(UserWritablePath, pack_array(\"Runs from a user-writable path\"), dynamic([])),\n            iff(NoArgs, pack_array(\"Process started with no arguments\"), dynamic([])),\n            iff(isnotnull(DevicesWithProc),\n                pack_array(strcat(\"Process name seen on \", DevicesWithProc, \" device(s) in \",\n                                  toint(baselinePeriod / 1d), \" days\")), dynamic([])))\n    | extend Severity = iff(IsUnexpected or (Relay and ExternalTargets > 0), \"High\", \"Medium\"),\n             DistinctTargets = InternalEndpoints + ExternalTargets,\n             Processes = pack_array(Proc),\n             ParentProcesses = pack_array(ParentProc),\n             DetectionBranch = \"Proxy process\";\nproxyProc\n| extend ReasonsText   = strcat_array(Reasons, \"; \"),\n         SampleCommand = tostring(SampleCommands[0])\n| project StartTime, EndTime, DeviceName, DeviceId, AccountDomain, AccountName,\n          DetectionBranch, Severity, ReasonsText, DistinctTargets, SampleTargets,\n          Processes, ParentProcesses, SampleCommand, SampleCommands\n| order by StartTime desc",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "startTimeUtc": null,
+        "tactics": [
+          "CommandAndControl"
+        ],
+        "techniques": [
+          "T1090"
+        ],
+        "subTechniques": [
+          "T1090.001"
+        ],
+        "alertRuleTemplateName": null,
+        "templateVersion": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT4H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [
+              "Host"
+            ],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Internal proxy: process relaying traffic on {{DeviceName}}",
+          "alertDescriptionFormat": "{{ReasonsText}}. Account: {{AccountName}}. Check what the process is and what started it, then which internal hosts connected through it.",
+          "alertDynamicProperties": []
+        },
+        "customDetails": {
+          "DetectionType": "DetectionBranch",
+          "Reasons": "ReasonsText",
+          "TargetCount": "DistinctTargets",
+          "Targets": "SampleTargets",
+          "Process": "Processes",
+          "ParentProcess": "ParentProcesses",
+          "Commands": "SampleCommands"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "SampleCommand"
+              }
+            ]
+          }
+        ],
+        "sentinelEntitiesMappings": null
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/719950aa-71b4-44a9-854c-a0649530ebe4')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/719950aa-71b4-44a9-854c-a0649530ebe4')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "T1090.001 - Internal Proxy - C2 Named Pipe",
+        "description": "Detects peer-to-peer C2 over named pipes (SMB beacon style): a default C2 pipe name, or a pipe that accepts remote clients created by a process that should not host one, such as dllhost.exe started with no arguments. Built from purple team findings. SolarWinds Orion servers are read from the DetectionExclusions watchlist (ExceptionType OrionServer).",
+        "severity": "Informational",
+        "enabled": false,
+        "query": "// T1090.001 Internal Proxy - C2 named pipe: default peer-to-peer C2 pipe names (SMB beacon style), or a\n// remotely reachable pipe created by a process that shouldn't host one\n// Runs hourly; window ends 10 minutes ago to allow for Defender ingestion delay.\nlet startTime = ago(70m);\nlet endTime   = ago(10m);\n// Testing: uncomment, set dates (UTC), comment out the two lines above\n// let startTime = datetime(2026-10-01 14:00:00);\n// let endTime   = datetime(2026-10-01 17:00:00);\n// No legitimate reason to relay traffic or host a remote pipe. msbuild.exe has its own rules.\nlet unexpectedProcs = dynamic([\"rundll32.exe\", \"regsvr32.exe\", \"mshta.exe\", \"installutil.exe\",\n    \"regasm.exe\", \"regsvcs.exe\", \"werfault.exe\", \"notepad.exe\", \"searchprotocolhost.exe\", \"gpupdate.exe\"]);\n// dllhost.exe is only unexpected when started with no arguments (real COM surrogates always carry\n// /Processid:{...}) or by something other than DcomLaunch (svchost) or COM+ System Application (services)\nlet dllhostParents = dynamic([\"svchost.exe\", \"services.exe\"]);\n// Never legitimately run without arguments (injection targets are often started bare)\nlet noArgProcs  = dynamic([\"dllhost.exe\", \"rundll32.exe\", \"regsvr32.exe\", \"werfault.exe\", \"searchprotocolhost.exe\"]);\nlet noArgsRegex = @'(?i)^\"?[^\"]*\\.exe\"?\\s*$';\n// Cobalt Strike defaults and common profile look-alikes, Covenant, PoshC2, Brute Ratel\nlet c2PipeRegex = @'(?i)\\\\(msagent_[0-9a-f]{2,}|msse-[0-9a-f]{3,}-server|postex_(ssh_)?[0-9a-f]{4}|status_[0-9a-f]{2}|(samr|netlogon|wkssvc|srvsvc|lsarpc|spoolss|ntsvcs|scerpc|interprocess)_[0-9a-f]{2,}|gruntsvc|jaccdpqnvbrrxlaf|demoagent_[0-9a-f]{2})$';\n// SolarWinds Orion server name(s), from the DetectionExclusions watchlist - the short host name is\n// enough. No rows = exclusion off.\nlet orionServers =\n    _GetWatchlist('DetectionExclusions')\n    | where Rule == \"T1090.001\" and ExceptionType == \"OrionServer\"\n    | project DeviceName = tolower(tostring(SearchKey));\nlet c2Pipe =\n    DeviceEvents\n    | where TimeGenerated between (startTime .. endTime)\n    | where ActionType == \"NamedPipeEvent\"\n    | extend Fields = parse_json(AdditionalFields)\n    | extend PipeName      = tostring(Fields.PipeName),\n             FileOperation = tostring(Fields.FileOperation),\n             RemoteAccess  = tostring(Fields.RemoteClientsAccess),\n             Proc = tolower(InitiatingProcessFileName), ParentProc = tolower(InitiatingProcessParentFileName)\n    | extend NoArgs = Proc in (noArgProcs) and InitiatingProcessCommandLine matches regex noArgsRegex\n    | extend KnownC2Pipe    = PipeName matches regex c2PipeRegex,\n             UnexpectedHost = (Proc in (unexpectedProcs)\n                               or (Proc == \"dllhost.exe\" and (NoArgs or ParentProc !in (dllhostParents))))\n                              and FileOperation == \"File created\" and RemoteAccess == \"AcceptRemote\"\n    | where KnownC2Pipe or UnexpectedHost\n    // SolarWinds Orion PDF export: its HTML-to-PDF engine runs a Chromium worker under rundll32,\n    // started by the Orion web console (w3wp.exe) or ExportToPdfCmd.exe. Only on the servers listed.\n    | where not(DeviceName has_any (orionServers)\n                and Proc == \"rundll32.exe\" and ParentProc in (\"w3wp.exe\", \"exporttopdfcmd.exe\")\n                and InitiatingProcessCommandLine has \"--no-sandbox\")\n    | summarize StartTime       = min(TimeGenerated),\n                EndTime         = max(TimeGenerated),\n                SampleTargets   = make_set(PipeName, 10),\n                RemoteClients   = make_set_if(RemoteIP, isnotempty(RemoteIP), 10),\n                SampleCommands  = make_set(InitiatingProcessCommandLine, 5),\n                KnownC2Pipe     = max(toint(KnownC2Pipe)),\n                UnexpectedHost  = max(toint(UnexpectedHost)),\n                NoArgs          = max(toint(NoArgs))\n        by DeviceId, DeviceName, Proc, ParentProc,\n           AccountDomain = InitiatingProcessAccountDomain, AccountName = InitiatingProcessAccountName\n    | extend Reasons = array_concat(\n            iff(KnownC2Pipe == 1, pack_array(\"Pipe name matches a default C2 peer-to-peer pipe\"), dynamic([])),\n            iff(UnexpectedHost == 1, pack_array(strcat(Proc, \" (parent \", ParentProc,\n                                                       \") created a pipe that accepts remote clients\")), dynamic([])),\n            iff(NoArgs == 1, pack_array(\"Process started with no arguments\"), dynamic([])),\n            iff(array_length(RemoteClients) > 0,\n                pack_array(strcat(\"Remote client(s): \", strcat_array(RemoteClients, \", \"))), dynamic([])))\n    | extend Severity = iff(KnownC2Pipe == 1 or NoArgs == 1, \"High\", \"Medium\"),\n             DistinctTargets = array_length(SampleTargets),\n             Processes = pack_array(Proc),\n             ParentProcesses = pack_array(ParentProc),\n             DetectionBranch = \"C2 named pipe\";\nc2Pipe\n| extend ReasonsText   = strcat_array(Reasons, \"; \"),\n         SampleCommand = tostring(SampleCommands[0])\n| project StartTime, EndTime, DeviceName, DeviceId, AccountDomain, AccountName,\n          DetectionBranch, Severity, ReasonsText, DistinctTargets, SampleTargets,\n          Processes, ParentProcesses, SampleCommand, SampleCommands\n| order by StartTime desc",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT2H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "startTimeUtc": null,
+        "tactics": [
+          "CommandAndControl"
+        ],
+        "techniques": [
+          "T1090"
+        ],
+        "subTechniques": [
+          "T1090.001"
+        ],
+        "alertRuleTemplateName": null,
+        "templateVersion": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT4H",
+            "matchingMethod": "Selected",
+            "groupByEntities": [
+              "Host"
+            ],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Internal proxy: suspicious C2 named pipe on {{DeviceName}}",
+          "alertDescriptionFormat": "{{ReasonsText}}. Account: {{AccountName}}. Check what started the process and which hosts connected to the pipe, then look for the same pipe name on other devices.",
+          "alertDynamicProperties": []
+        },
+        "customDetails": {
+          "DetectionType": "DetectionBranch",
+          "Reasons": "ReasonsText",
+          "TargetCount": "DistinctTargets",
+          "Targets": "SampleTargets",
+          "Process": "Processes",
+          "ParentProcess": "ParentProcesses",
+          "Commands": "SampleCommands"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "DeviceName"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AccountName"
+              },
+              {
+                "identifier": "NTDomain",
+                "columnName": "AccountDomain"
+              }
+            ]
+          },
+          {
+            "entityType": "Process",
+            "fieldMappings": [
+              {
+                "identifier": "CommandLine",
+                "columnName": "SampleCommand"
+              }
+            ]
+          }
+        ],
+        "sentinelEntitiesMappings": null
+      }
+    }
+  ]
+}
